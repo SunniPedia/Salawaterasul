@@ -1,0 +1,319 @@
+name: Generate Salawat Images
+
+on:
+  workflow_dispatch:
+    inputs:
+      arabic_name:
+        description: 'পারার নাম (আরবি - নিচে থাকবে)'
+        required: true
+        type: string
+      bangla_name:
+        description: 'পৃষ্ঠার নাম (বাংলা - পারার নামের নিচে থাকবে)'
+        required: true
+        type: string
+      subtitle_text:
+        description: 'সাবটাইটেল (টাইটেলের নিচে থাকবে)'
+        required: false
+        default: 'প্রিয় নবী ﷺ''র নূর ও প্রকাশ প্রসঙ্গে'
+        type: string
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - run: pip install Pillow
+
+      - name: Generate Salawat Images
+        env:
+          ARABIC_NAME: ${{ inputs.arabic_name }}
+          BANGLA_NAME: ${{ inputs.bangla_name }}
+          SUBTITLE_TEXT: ${{ inputs.subtitle_text }}
+        run: |
+          python3 << 'PY'
+          from PIL import Image, ImageDraw, ImageFont
+          import json, os, re, shutil
+
+          BG="src/background.jpg"
+          LOGO="src/logo.jpg"
+          DATA="src/data.json"
+          OUT="output"
+          FONT_BN="src/solaimanlipi.ttf"
+          FONT_AR="src/noorehuda.ttf"
+
+          def normalize_arabic_display(text):
+              return text.replace('\u0671', '\u0627')
+
+          PARA_NAME=normalize_arabic_display(os.environ.get("ARABIC_NAME","").strip())
+          PAGE_NAME=os.environ.get("BANGLA_NAME","").strip()
+          SUBTITLE= os.environ.get("SUBTITLE_TEXT","").strip() or "প্রিয় নবী ﷺ'র নূর ও প্রকাশ প্রসঙ্গে"
+          print(f"PARA={PARA_NAME!r}, PAGE={PAGE_NAME!r}, SUBTITLE={SUBTITLE!r}")
+
+          if os.path.exists(OUT):
+              shutil.rmtree(OUT)
+          os.makedirs(OUT, exist_ok=True)
+
+          EN_TO_BN=str.maketrans("0123456789","০১২৩৪৫৬৭৮৯")
+          def to_bangla_num(s): return str(s).translate(EN_TO_BN)
+
+          W,H=3840,2160
+          bg_img=Image.open(BG).convert("RGB") if os.path.exists(BG) else Image.new("RGB",(W,H),(232,236,244))
+          W,H=bg_img.size
+
+          LEFT_W=int(W*0.22)
+          SCALE=W/1280
+
+          def get_font_by_size(is_ar, px_size):
+              p=FONT_AR if is_ar else FONT_BN
+              try: return ImageFont.truetype(p, int(px_size))
+              except: return ImageFont.load_default()
+          def get_font(is_ar, dp):
+              return get_font_by_size(is_ar, dp*SCALE)
+
+          with open(DATA, encoding="utf-8") as f:
+              data=json.load(f)
+
+          BASE_TITLE = 38
+          BASE_SUBTITLE = 30
+          BASE_DETAILS_AR = 68
+          BASE_DETAILS_BN = 68
+          BASE_AR = 85
+          BASE_TRANS = 46
+          BASE_BN = 52
+
+          BOTTOM_MARGIN = int(5 * SCALE)
+          TOP_MARGIN = int(140*SCALE)
+          SIDE_MARGIN=int(30*SCALE)
+          AVAIL_W_NAMES = LEFT_W - 2*SIDE_MARGIN
+
+          _dummy_draw=ImageDraw.Draw(Image.new("RGB",(10,10)))
+          temp_DET=72
+          while True:
+              f_ar_det=get_font_by_size(True, temp_DET*SCALE)
+              f_bn_det=get_font_by_size(False, temp_DET*SCALE)
+              AR_W=_dummy_draw.textlength(PARA_NAME, font=f_ar_det)
+              BN_W=_dummy_draw.textlength(PAGE_NAME, font=f_bn_det)
+              if max(AR_W, BN_W) <= AVAIL_W_NAMES or temp_DET <= 32:
+                  BASE_DETAILS_AR=temp_DET
+                  BASE_DETAILS_BN=temp_DET
+                  break
+              temp_DET -= 2
+
+          def draw_label_colon(draw, x, y, label, value, font, fill):
+              draw.text((x, y), label, font=font, fill=fill)
+              label_w = draw.textlength(label, font=font)
+              colon_up = int(font.size * 0.12)
+              draw.text((x+label_w, y-colon_up), ":", font=font, fill=fill)
+              colon_w = draw.textlength(":", font=font)
+              if value:
+                  draw.text((x+label_w+colon_w, y), " "+value, font=font, fill=fill)
+
+          for item in data:
+              id_int = int(item.get('id', 0))
+              filename=f"{id_int:04d}.jpg"
+              id_disp_bn = to_bangla_num(str(id_int))
+
+              bg=bg_img.resize((W,H), Image.LANCZOS)
+              draw=ImageDraw.Draw(bg)
+              draw.rectangle([0,0,LEFT_W,H], fill=(214,218,228))
+
+              if os.path.exists(LOGO):
+                  try:
+                      ls=int(200*SCALE)
+                      logo=Image.open(LOGO).convert("RGBA").resize((ls,ls), Image.LANCZOS)
+                      bg.paste(logo,(int((LEFT_W-ls)//2), int(30*SCALE)), logo)
+                  except: pass
+
+              f_title = get_font(False, BASE_TITLE)
+              f_subtitle = get_font(False, BASE_SUBTITLE)
+
+              title_text = "মাজমূ’আহ্ সালাওয়াতির রসূল ﷺ"
+              max_title_w = LEFT_W - int(20*SCALE)
+
+              # Title wrap
+              def wrap_text(text, font, max_w, draw_obj):
+                  lines=[]
+                  cur=""
+                  for w in text.split():
+                      test=f"{cur} {w}".strip()
+                      if draw_obj.textlength(test, font=font) <= max_w:
+                          cur=test
+                      else:
+                          if cur: lines.append(cur)
+                          cur=w
+                  if cur: lines.append(cur)
+                  return lines
+
+              title_lines = wrap_text(title_text, f_title, max_title_w, draw)
+              subtitle_lines = wrap_text(SUBTITLE, f_subtitle, max_title_w, draw)
+
+              title_y = int(260*SCALE)
+              for line in title_lines:
+                  w_line = draw.textlength(line, font=f_title)
+                  draw.text(((LEFT_W - w_line)//2, title_y), line, font=f_title, fill=(15,25,85))
+                  title_y += int(BASE_TITLE*SCALE*1.4)
+
+              # Subtitle - Title এর নিচে
+              title_y += int(10*SCALE)
+              for line in subtitle_lines:
+                  w_line = draw.textlength(line, font=f_subtitle)
+                  draw.text(((LEFT_W - w_line)//2, title_y), line, font=f_subtitle, fill=(70,70,90))
+                  title_y += int(BASE_SUBTITLE*SCALE*1.45)
+
+              title_y += int(20*SCALE)
+              draw.line([(int(40*SCALE), title_y), (int(LEFT_W-40*SCALE), title_y)], fill=(100,100,120), width=int(2*SCALE))
+              names_y = title_y + int(30*SCALE)
+
+              f_ar_det=get_font_by_size(True, BASE_DETAILS_AR*SCALE)
+              f_bn_det=get_font_by_size(False, BASE_DETAILS_BN*SCALE)
+              ar_w = draw.textlength(PARA_NAME, font=f_ar_det)
+              bn_w = draw.textlength(PAGE_NAME, font=f_bn_det)
+              ar_x = (LEFT_W - ar_w)//2
+              bn_x = (LEFT_W - bn_w)//2
+              dy = names_y
+              draw.text((ar_x, dy), PARA_NAME, font=f_ar_det, fill=(20,20,60))
+              dy += int(BASE_DETAILS_AR*SCALE*1.6) + int(22*SCALE)
+              draw.text((bn_x, dy), PAGE_NAME, font=f_bn_det, fill=(20,20,60))
+
+              # ID Circle
+              f_circle_num = get_font(False, 42)
+              circle_dia = int(110*SCALE)
+              circle_x = W - circle_dia - int(50*SCALE)
+              circle_y = int(50*SCALE)
+              draw.ellipse([(circle_x, circle_y), (circle_x+circle_dia, circle_y+circle_dia)], fill=(35,45,85), outline=(35,45,85))
+              num_w = draw.textlength(id_disp_bn, font=f_circle_num)
+              num_h = f_circle_num.size
+              draw.text((circle_x + (circle_dia - num_w)//2, circle_y + (circle_dia - num_h)//2 - int(5*SCALE)), id_disp_bn, font=f_circle_num, fill=(255,255,255))
+
+              f_kanzul=get_font(False, 40)
+              max_w=W-LEFT_W-int(140*SCALE)
+
+              temp_AR = BASE_AR
+              while True:
+                  f_ar=get_font(True, temp_AR)
+                  arabic_raw=normalize_arabic_display(item.get('arabic','').strip())
+                  arabic_lines=[]
+                  cur=""
+                  for w in arabic_raw.split():
+                      test=f"{cur} {w}".strip()
+                      if draw.textlength(test, font=f_ar) <= max_w:
+                          cur=test
+                      else:
+                          if cur: arabic_lines.append(cur)
+                          cur=w
+                  if cur: arabic_lines.append(cur)
+                  line_widths = [draw.textlength(line, font=f_ar) for line in arabic_lines]
+                  max_line_w = max(line_widths) if line_widths else 0
+                  ar_block_h = len(arabic_lines) * int(temp_AR*SCALE*1.5)
+                  fits = ar_block_h <= (H - int(200*SCALE)) * 0.5 and max_line_w <= max_w
+                  if fits or temp_AR <= 48:
+                      BASE_AR_CURR = temp_AR
+                      break
+                  temp_AR -= 2
+
+              f_ar = get_font(True, BASE_AR_CURR)
+
+              temp_BN = BASE_BN
+              temp_TR = BASE_TRANS
+              while True:
+                  f_bn=get_font(False, temp_BN)
+                  f_tr=get_font(False, temp_TR)
+
+                  trans_raw = item.get('transliteration','').strip()
+                  trans_lines=[]
+                  cur=""
+                  for w in trans_raw.split():
+                      test=f"{cur} {w}".strip()
+                      if draw.textlength(test, font=f_tr) <= max_w:
+                          cur=test
+                      else:
+                          if cur: trans_lines.append(cur)
+                          cur=w
+                  if cur: trans_lines.append(cur)
+
+                  bn_raw = item.get('bengali','').strip()
+                  bn_lines=[]
+                  cur=""
+                  for w in bn_raw.split():
+                      test=f"{cur} {w}".strip()
+                      if draw.textlength(test, font=f_bn) <= max_w:
+                          cur=test
+                      else:
+                          if cur: bn_lines.append(cur)
+                          cur=w
+                  if cur: bn_lines.append(cur)
+
+                  needed = ar_block_h + int(50*SCALE) + len(trans_lines)*int(temp_TR*SCALE*1.5) + int(40*SCALE) + len(bn_lines)*int(temp_BN*SCALE*1.45)
+                  if needed < H - TOP_MARGIN - BOTTOM_MARGIN or temp_BN <= 28:
+                      break
+                  temp_BN -= 1
+                  temp_TR -= 1
+
+              f_bn=get_font(False, temp_BN)
+              f_tr=get_font(False, temp_TR)
+
+              gap1 = int(50*SCALE)
+              gap2 = int(40*SCALE)
+              total_block_h = ar_block_h + gap1 + len(trans_lines)*int(temp_TR*SCALE*1.5) + gap2 + int(75*SCALE) + len(bn_lines)*int(temp_BN*SCALE*1.4)
+
+              start_y = max(TOP_MARGIN, (H - total_block_h - BOTTOM_MARGIN) // 2)
+              if start_y + total_block_h + BOTTOM_MARGIN > H:
+                  start_y = H - total_block_h - BOTTOM_MARGIN
+
+              y=start_y
+              for line in arabic_lines:
+                  w=draw.textlength(line, font=f_ar)
+                  draw.text((W-int(70*SCALE)-w, y), line, font=f_ar, fill=(0,0,0))
+                  y+=int(BASE_AR_CURR*SCALE*1.5)
+
+              y+=gap1
+              for line in trans_lines:
+                  draw.text((LEFT_W+int(50*SCALE), y), line, font=f_tr, fill=(60,60,60))
+                  y+=int(temp_TR*SCALE*1.5)
+
+              y+=gap2
+              draw_label_colon(draw, LEFT_W+int(50*SCALE), y, "উচ্চারণ ও অনুবাদ", "", f_kanzul, (20,40,120))
+              y+=int(75*SCALE)
+
+              for i,line in enumerate(bn_lines):
+                  words=line.split()
+                  is_last=i==len(bn_lines)-1
+                  if not is_last and len(words)>1:
+                      base_w=sum(draw.textlength(w, font=f_bn) for w in words) + draw.textlength(" ", font=f_bn)*(len(words)-1)
+                      extra=max_w-base_w
+                      gap=extra/(len(words)-1) if len(words)>1 else 0
+                      if 0 < gap < 70*SCALE:
+                          tx=LEFT_W+int(50*SCALE)
+                          for w in words:
+                              draw.text((tx,y), w, font=f_bn, fill=(15,25,85))
+                              tx+=draw.textlength(w, font=f_bn)+draw.textlength(" ", font=f_bn)+gap
+                      else:
+                          draw.text((LEFT_W+int(50*SCALE), y), line, font=f_bn, fill=(15,25,85))
+                  else:
+                      draw.text((LEFT_W+int(50*SCALE), y), line, font=f_bn, fill=(15,25,85))
+                  y+=int(temp_BN*SCALE*1.4)
+
+              bg.save(os.path.join(OUT, filename), "JPEG", quality=95, subsampling=0)
+              print(f"Done {filename}")
+
+          PY
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: salawat-images
+          path: output/
+          retention-days: 7
+
+      - name: Push output
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -f output/
+          git commit -m "feat: add subtitle option + circled id" || echo "no changes"
+          git push
