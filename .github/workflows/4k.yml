@@ -58,6 +58,7 @@ jobs:
           # Case 2: Ayat format - 001001.jpg + 001001.mp3
           else
             echo "Single format not found, trying Ayat format: ${SURAH}*.jpg"
+
             for img_file in "$IMG_DIR"/${SURAH}*.jpg; do
               [ -e "$img_file" ] || continue
               file_name=$(basename "$img_file")
@@ -78,7 +79,7 @@ jobs:
               fi
             done
 
-            if! ls "$TEMP_VIDEO_DIR"/${SURAH}*.mp4 1> /dev/null 2>&1; then
+            if ! ls "$TEMP_VIDEO_DIR"/${SURAH}*.mp4 1> /dev/null 2>&1; then
               echo "ERROR: No image/audio found for Surah $SURAH"
               echo "Checked: $IMG_DIR/${SURAH}.jpg and $IMG_DIR/${SURAH}*.jpg"
               echo "And audios: $AUDIO_DIR/${SURAH}.mp3 and $AUDIO_DIR/${SURAH}*.mp3"
@@ -86,8 +87,8 @@ jobs:
             fi
 
             ls -1 "$TEMP_VIDEO_DIR"/${SURAH}*.mp4 | sort -V > video_list_raw.txt
-
             rm -f concat_videos.txt
+
             while read f; do
               echo "file '$PWD/$f'" >> concat_videos.txt
             done < video_list_raw.txt
