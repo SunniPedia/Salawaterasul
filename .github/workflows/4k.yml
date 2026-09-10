@@ -37,7 +37,7 @@ jobs:
           AUDIO_DIR="${{ inputs.audio_folder }}"
           SURAH="${{ inputs.surah_number }}"
           
-          # Convert 3-digit SURAH (e.g., 001) to 4-digit format (e.g., 0001)
+          SURAH_3D=$(printf "%03d" "$((10#$SURAH))")
           SURAH_4D=$(printf "%04d" "$((10#$SURAH))")
 
           TEMP_VIDEO_DIR="temp_${SURAH}_videos"
@@ -47,13 +47,13 @@ jobs:
           mkdir -p "$FINAL_DIR"
           rm -f "$FINAL_DIR/${SURAH}.mp4"
 
-          # Case 1: Single file format - 001/0001.jpg + 001/0001.mp3
+          # Case 1: Single file format
           if [ -f "$IMG_DIR/${SURAH_4D}.jpg" ] && [ -f "$AUDIO_DIR/${SURAH_4D}.mp3" ]; then
             MATCH_IMG="$IMG_DIR/${SURAH_4D}.jpg"
             MATCH_AUDIO="$AUDIO_DIR/${SURAH_4D}.mp3"
-          elif [ -f "$IMG_DIR/${SURAH}.jpg" ] && [ -f "$AUDIO_DIR/${SURAH}.mp3" ]; then
-            MATCH_IMG="$IMG_DIR/${SURAH}.jpg"
-            MATCH_AUDIO="$AUDIO_DIR/${SURAH}.mp3"
+          elif [ -f "$IMG_DIR/${SURAH_3D}.jpg" ] && [ -f "$AUDIO_DIR/${SURAH_3D}.mp3" ]; then
+            MATCH_IMG="$IMG_DIR/${SURAH_3D}.jpg"
+            MATCH_AUDIO="$AUDIO_DIR/${SURAH_3D}.mp3"
           else
             MATCH_IMG=""
           fi
@@ -69,19 +69,29 @@ jobs:
               -pix_fmt yuv420p -shortest \
               "$FINAL_DIR/${SURAH}.mp4"
 
-          # Case 2: Ayat format - matches both 0001*.jpg and 001*.jpg
+          # Case 2: Ayat format - maps 4-digit images (0001.jpg) to 3-digit audio (001.mp3)
           else
             echo "Single format not found, trying Ayat format..."
 
-            for img_file in "$IMG_DIR"/${SURAH_4D}*.jpg "$IMG_DIR"/${SURAH}*.jpg; do
+            for img_file in "$IMG_DIR"/${SURAH_4D}*.jpg "$IMG_DIR"/${SURAH_3D}*.jpg; do
               [ -e "$img_file" ] || continue
               file_name=$(basename "$img_file")
               base="${file_name%.*}"
-              audio_file="$AUDIO_DIR/$base.mp3"
 
-              echo "Processing: $file_name -> $base.mp4"
+              # Try 3-digit audio conversion if 4-digit audio is missing
+              base_3d=$(printf "%03d" "$((10#$base))" 2>/dev/null || echo "$base")
+              
+              if [ -f "$AUDIO_DIR/$base.mp3" ]; then
+                audio_file="$AUDIO_DIR/$base.mp3"
+              elif [ -f "$AUDIO_DIR/$base_3d.mp3" ]; then
+                audio_file="$AUDIO_DIR/$base_3d.mp3"
+              else
+                audio_file=""
+              fi
 
-              if [ -f "$audio_file" ]; then
+              echo "Processing: $file_name -> audio: $audio_file"
+
+              if [ -n "$audio_file" ] && [ -f "$audio_file" ]; then
                 ffmpeg -y -hide_banner -loglevel error \
                   -loop 1 -i "$img_file" \
                   -i "$audio_file" \
@@ -94,7 +104,7 @@ jobs:
             done
 
             if ! ls "$TEMP_VIDEO_DIR"/*.mp4 1> /dev/null 2>&1; then
-              echo "ERROR: No image/audio found for Surah $SURAH (checked 4-digit $SURAH_4D as well)"
+              echo "ERROR: No matching audio found for images in Surah $SURAH"
               exit 1
             fi
 
