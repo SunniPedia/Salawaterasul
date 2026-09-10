@@ -36,6 +36,10 @@ jobs:
           IMG_DIR="${{ inputs.image_folder }}"
           AUDIO_DIR="${{ inputs.audio_folder }}"
           SURAH="${{ inputs.surah_number }}"
+          
+          # Convert 3-digit SURAH (e.g., 001) to 4-digit format (e.g., 0001)
+          SURAH_4D=$(printf "%04d" "$((10#$SURAH))")
+
           TEMP_VIDEO_DIR="temp_${SURAH}_videos"
           FINAL_DIR="rizwanSurahVideo"
 
@@ -43,23 +47,33 @@ jobs:
           mkdir -p "$FINAL_DIR"
           rm -f "$FINAL_DIR/${SURAH}.mp4"
 
-          # Case 1: Single file format - 001.jpg + 001.mp3
-          if [ -f "$IMG_DIR/${SURAH}.jpg" ] && [ -f "$AUDIO_DIR/${SURAH}.mp3" ]; then
-            echo "Found single format: ${SURAH}.jpg + ${SURAH}.mp3"
+          # Case 1: Single file format - 001/0001.jpg + 001/0001.mp3
+          if [ -f "$IMG_DIR/${SURAH_4D}.jpg" ] && [ -f "$AUDIO_DIR/${SURAH_4D}.mp3" ]; then
+            MATCH_IMG="$IMG_DIR/${SURAH_4D}.jpg"
+            MATCH_AUDIO="$AUDIO_DIR/${SURAH_4D}.mp3"
+          elif [ -f "$IMG_DIR/${SURAH}.jpg" ] && [ -f "$AUDIO_DIR/${SURAH}.mp3" ]; then
+            MATCH_IMG="$IMG_DIR/${SURAH}.jpg"
+            MATCH_AUDIO="$AUDIO_DIR/${SURAH}.mp3"
+          else
+            MATCH_IMG=""
+          fi
+
+          if [ -n "$MATCH_IMG" ]; then
+            echo "Found single format: $MATCH_IMG + $MATCH_AUDIO"
             ffmpeg -y -hide_banner -loglevel error \
-              -loop 1 -i "$IMG_DIR/${SURAH}.jpg" \
-              -i "$AUDIO_DIR/${SURAH}.mp3" \
+              -loop 1 -i "$MATCH_IMG" \
+              -i "$MATCH_AUDIO" \
               -c:v libx264 -tune stillimage -preset medium -crf 18 \
               -vf "scale=3840:2160:force_original_aspect_ratio=increase,crop=3840:2160,setsar=1,fps=30" \
               -c:a aac -b:a 192k \
               -pix_fmt yuv420p -shortest \
               "$FINAL_DIR/${SURAH}.mp4"
 
-          # Case 2: Ayat format - 001001.jpg + 001001.mp3
+          # Case 2: Ayat format - matches both 0001*.jpg and 001*.jpg
           else
-            echo "Single format not found, trying Ayat format: ${SURAH}*.jpg"
+            echo "Single format not found, trying Ayat format..."
 
-            for img_file in "$IMG_DIR"/${SURAH}*.jpg; do
+            for img_file in "$IMG_DIR"/${SURAH_4D}*.jpg "$IMG_DIR"/${SURAH}*.jpg; do
               [ -e "$img_file" ] || continue
               file_name=$(basename "$img_file")
               base="${file_name%.*}"
@@ -79,14 +93,12 @@ jobs:
               fi
             done
 
-            if ! ls "$TEMP_VIDEO_DIR"/${SURAH}*.mp4 1> /dev/null 2>&1; then
-              echo "ERROR: No image/audio found for Surah $SURAH"
-              echo "Checked: $IMG_DIR/${SURAH}.jpg and $IMG_DIR/${SURAH}*.jpg"
-              echo "And audios: $AUDIO_DIR/${SURAH}.mp3 and $AUDIO_DIR/${SURAH}*.mp3"
+            if ! ls "$TEMP_VIDEO_DIR"/*.mp4 1> /dev/null 2>&1; then
+              echo "ERROR: No image/audio found for Surah $SURAH (checked 4-digit $SURAH_4D as well)"
               exit 1
             fi
 
-            ls -1 "$TEMP_VIDEO_DIR"/${SURAH}*.mp4 | sort -V > video_list_raw.txt
+            ls -1 "$TEMP_VIDEO_DIR"/*.mp4 | sort -V > video_list_raw.txt
             rm -f concat_videos.txt
 
             while read f; do
