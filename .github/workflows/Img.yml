@@ -3,18 +3,20 @@ name: Generate Salawat Images
 on:
   workflow_dispatch:
     inputs:
-      arabic_name:
+      para_name:
         description: 'পারার নাম (যেমন: পারা : ০১)'
         required: true
+        default: 'পারা : ০১'
         type: string
-      bangla_name:
+      page_name:
         description: 'পৃষ্ঠার নাম (যেমন: পৃষ্ঠা : ০১)'
         required: true
+        default: 'পৃষ্ঠা : ০১'
         type: string
       subtitle_text:
         description: 'সাবটাইটেল'
         required: false
-        default: 'প্রিয় নবী ﷺ''র নূর ও প্রকাশ প্রসঙ্গে'
+        default: 'প্রিয় নবী ﷺ''র নূর ও প্রকাশ প্রসঙ্গে'
         type: string
 
 jobs:
@@ -27,16 +29,17 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.10'
-      - run: pip install Pillow
+      - run: pip install Pillow fonttools
 
       - name: Generate Salawat Images
         env:
-          ARABIC_NAME: ${{ inputs.arabic_name }}
-          BANGLA_NAME: ${{ inputs.bangla_name }}
+          PARA_NAME: ${{ inputs.para_name }}
+          PAGE_NAME: ${{ inputs.page_name }}
           SUBTITLE_TEXT: ${{ inputs.subtitle_text }}
         run: |
           python3 << 'PY'
           from PIL import Image, ImageDraw, ImageFont
+          from fontTools.ttLib import TTFont
           import json, os, shutil, urllib.request
 
           BG="src/background.jpg"
@@ -47,22 +50,67 @@ jobs:
           FONT_AR="src/noorehuda.ttf"
           FONT_SA="src/amiri.ttf" # ﷺ এর জন্য
 
-          # ﷺ এর জন্য ফন্ট ডাউনলোড - এই ফন্টে ﷺ আছে
-          if not os.path.exists(FONT_SA):
+          SALLALLAHU_CP = 0xFDFA  # ﷺ এর codepoint
+
+          def has_glyph(font_path, codepoint):
+              """ফন্টে আসলেই এই glyph আছে কিনা যাচাই করে (শুধু file exists চেক না)"""
               try:
-                  print("Downloading Amiri font for ﷺ...")
-                  os.makedirs("src", exist_ok=True)
-                  urllib.request.urlretrieve("https://github.com/google/fonts/raw/main/ofl/amiri/Amiri-Regular.ttf", FONT_SA)
+                  tt = TTFont(font_path)
+                  cmap = tt.getBestCmap()
+                  return cmap is not None and codepoint in cmap
               except Exception as e:
-                  print(f"Amiri download failed: {e}, will use {FONT_AR}")
-                  FONT_SA = FONT_AR
+                  print(f"  glyph-check ব্যর্থ ({font_path}): {e}")
+                  return False
+
+          # ধাপ ১: প্রথমে দেখি FONT_AR (noorehuda) নিজেই ﷺ সাপোর্ট করে কিনা - করলে আলাদা ফন্ট ডাউনলোডের দরকার নেই
+          if os.path.exists(FONT_AR) and has_glyph(FONT_AR, SALLALLAHU_CP):
+              print(f"{FONT_AR}-এ ﷺ glyph পাওয়া গেছে, সেটাই ব্যবহার হবে।")
+              FONT_SA = FONT_AR
+          else:
+              # ধাপ ২: amiri.ttf আগে থেকে থাকলেও glyph যাচাই করে নেই (আগের রানে corrupted download থাকতে পারে)
+              need_download = True
+              if os.path.exists(FONT_SA):
+                  if has_glyph(FONT_SA, SALLALLAHU_CP):
+                      print(f"{FONT_SA} আগে থেকেই আছে এবং ﷺ glyph valid।")
+                      need_download = False
+                  else:
+                      print(f"{FONT_SA} আছে কিন্তু ﷺ glyph নেই/ভাঙা, নতুন করে ডাউনলোড হবে।")
+                      os.remove(FONT_SA)
+
+              if need_download:
+                  os.makedirs("src", exist_ok=True)
+                  try:
+                      print("Amiri font ডাউনলোড হচ্ছে (ﷺ সাপোর্টের জন্য)...")
+                      urllib.request.urlretrieve(
+                          "https://github.com/google/fonts/raw/main/ofl/amiri/Amiri-Regular.ttf",
+                          FONT_SA
+                      )
+                      if not has_glyph(FONT_SA, SALLALLAHU_CP):
+                          raise RuntimeError("ডাউনলোড হওয়া ফন্টেও ﷺ glyph পাওয়া যায়নি।")
+                      print("Amiri font ডাউনলোড সফল, ﷺ glyph নিশ্চিত হয়েছে।")
+                  except Exception as e:
+                      print(f"⚠️  Amiri download/verify ব্যর্থ: {e}")
+                      print(f"⚠️  ﷺ চিহ্নটি এই রানে সঠিকভাবে নাও দেখাতে পারে — {FONT_AR} দিয়ে fallback করা হচ্ছে।")
+                      FONT_SA = FONT_AR
 
           def normalize_ar(text):
               return text.replace('\u0671', '\u0627')
 
-          PARA_RAW=os.environ.get("ARABIC_NAME","").strip()
-          PAGE_RAW=os.environ.get("BANGLA_NAME","").strip()
-          SUB_RAW=os.environ.get("SUBTITLE_TEXT","").strip() or "প্রিয় নবী ﷺ'র নূর ও প্রকাশ প্রসঙ্গে"
+          PARA_RAW=os.environ.get("PARA_NAME","").strip()
+          PAGE_RAW=os.environ.get("PAGE_NAME","").strip()
+          SUB_RAW=os.environ.get("SUBTITLE_TEXT","").strip() or "প্রিয় নবী ﷺ'র নূর ও প্রকাশ প্রসঙ্গে"
+
+          # ডিবাগ: inputs আসলে কী এসেছে তা log-এ দেখাই, যাতে খালি থাকলে সাথে সাথে বোঝা যায়
+          print(f"[DEBUG] PARA_RAW = '{PARA_RAW}'")
+          print(f"[DEBUG] PAGE_RAW = '{PAGE_RAW}'")
+          print(f"[DEBUG] SUB_RAW  = '{SUB_RAW}'")
+
+          if not PARA_RAW:
+              print("[WARNING] পারার নাম খালি এসেছে! Workflow trigger করার সময় 'para_name' ফিল্ডে মান দিন।")
+              PARA_RAW = "পারা : ০১"
+          if not PAGE_RAW:
+              print("[WARNING] পৃষ্ঠার নাম খালি এসেছে! Workflow trigger করার সময় 'page_name' ফিল্ডে মান দিন।")
+              PAGE_RAW = "পৃষ্ঠা : ০১"
 
           if os.path.exists(OUT):
               shutil.rmtree(OUT)
@@ -82,7 +130,7 @@ jobs:
               except: return ImageFont.load_default()
 
           def draw_mixed(draw_obj, x, y, text, fn_bn, fn_sa, fill):
-              """বাংলা শব্দ আস্ত রেখে শুধু ﷺ টা আলাদা ফন্টে আঁকবে"""
+              """বাংলা/আরবি টেক্সট আস্ত রেখে শুধু ﷺ টা আলাদা (glyph-verified) ফন্টে আঁকবে"""
               parts = text.split('ﷺ')
               cur_x = x
               for i, part in enumerate(parts):
@@ -115,6 +163,7 @@ jobs:
               return lines
 
           def wrap_simple(text, fn, max_w, draw_obj):
+              # রাখা হলো backward-compat এর জন্য, কিন্তু main content-এও এখন wrap_mixed ব্যবহার হবে
               lines=[]; cur=""
               for w in text.split():
                   test=f"{cur} {w}".strip()
@@ -155,15 +204,18 @@ jobs:
               f_page_sa=font(FONT_SA, 44)
               f_num=font(FONT_BN, 42)
               f_ar=font(FONT_AR, 78)
+              f_ar_sa=font(FONT_SA, 78)
               f_tr=font(FONT_BN, 40)
+              f_tr_sa=font(FONT_SA, 40)
               f_bn=font(FONT_BN, 46)
+              f_bn_sa=font(FONT_SA, 46)
               f_label=font(FONT_BN, 36)
 
               max_left=LEFT_W-int(40*SCALE)
               max_right=W-LEFT_W-int(140*SCALE)
 
               y=int(260*SCALE)
-              title="মাজমূ’আহ্ সালাওয়াতির রসূল ﷺ"
+              title="মাজমূ’আহ্ সালাওয়াতির রসূল ﷺ"
               for line in wrap_mixed(title, f_title_bn, f_title_sa, max_left, draw):
                   w=length_mixed(line, f_title_bn, f_title_sa, draw)
                   sx=(LEFT_W-w)//2
@@ -179,7 +231,7 @@ jobs:
               y+=int(16*SCALE)
               draw.line([(int(40*SCALE), y), (LEFT_W-int(40*SCALE), y)], fill=(100,100,120), width=2)
 
-              # পারা + পৃষ্ঠা - এখন দুটোই দেখা যাবে, ﷺ সহ
+              # পারা + পৃষ্ঠা - ﷺ সহ, mixed-font রেন্ডারিং দিয়ে
               para_y = H - int(200*SCALE)
               page_y = H - int(110*SCALE)
 
@@ -197,27 +249,32 @@ jobs:
               nw=draw.textlength(id_bn, font=f_num)
               draw.text((cx+(dia-nw)//2, cy+(dia-int(42*SCALE))//2), id_bn, font=f_num, fill=(255,255,255))
 
-              # ডান পাশ
-              ar_lines=wrap_simple(normalize_ar(item.get('arabic','')), f_ar, max_right, draw)
-              tr_lines=wrap_simple(item.get('transliteration',''), f_tr, max_right, draw)
-              bn_lines=wrap_simple(item.get('bengali',''), f_bn, max_right, draw)
+              # ডান পাশ - এখন এখানেও wrap_mixed/draw_mixed, কারণ data.json এর
+              # arabic/transliteration/bengali field-এও ﷺ থাকতে পারে
+              arabic_txt = normalize_ar(item.get('arabic',''))
+              tr_txt = item.get('transliteration','')
+              bn_txt = item.get('bengali','')
+
+              ar_lines=wrap_mixed(arabic_txt, f_ar, f_ar_sa, max_right, draw)
+              tr_lines=wrap_mixed(tr_txt, f_tr, f_tr_sa, max_right, draw)
+              bn_lines=wrap_mixed(bn_txt, f_bn, f_bn_sa, max_right, draw)
 
               total=len(ar_lines)*int(78*SCALE*1.5)+len(tr_lines)*int(40*SCALE*1.5)+len(bn_lines)*int(46*SCALE*1.4)+250
               sy=max(int(140*SCALE), (H-total)//2)
               yy=sy
               for line in ar_lines:
-                  ww=draw.textlength(line, font=f_ar)
-                  draw.text((W-int(70*SCALE)-ww, yy), line, font=f_ar, fill=(0,0,0))
+                  ww=length_mixed(line, f_ar, f_ar_sa, draw)
+                  draw_mixed(draw, W-int(70*SCALE)-ww, yy, line, f_ar, f_ar_sa, (0,0,0))
                   yy+=int(78*SCALE*1.5)
               yy+=int(35*SCALE)
               for line in tr_lines:
-                  draw.text((LEFT_W+int(50*SCALE), yy), line, font=f_tr, fill=(60,60,60))
+                  draw_mixed(draw, LEFT_W+int(50*SCALE), yy, line, f_tr, f_tr_sa, (60,60,60))
                   yy+=int(40*SCALE*1.5)
               yy+=int(25*SCALE)
               draw.text((LEFT_W+int(50*SCALE), yy), "বঙ্গানুবাদ:", font=f_label, fill=(20,40,120))
               yy+=int(60*SCALE)
               for line in bn_lines:
-                  draw.text((LEFT_W+int(50*SCALE), yy), line, font=f_bn, fill=(15,25,85))
+                  draw_mixed(draw, LEFT_W+int(50*SCALE), yy, line, f_bn, f_bn_sa, (15,25,85))
                   yy+=int(46*SCALE*1.4)
 
               bg.save(os.path.join(OUT, filename), "JPEG", quality=95, subsampling=0)
@@ -237,5 +294,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add -f output/
-          git commit -m "fix: para visible + ﷺ with amiri font" || echo "no changes"
+          git commit -m "fix: para visible + verified ﷺ glyph (all text fields)" || echo "no changes"
           git push
