@@ -4,11 +4,11 @@ on:
   workflow_dispatch:
     inputs:
       arabic_name:
-        description: 'পারার নাম (আরবি - নিচে থাকবে)'
+        description: 'পারার নাম (যেমন: পারা : ০১)'
         required: true
         type: string
       bangla_name:
-        description: 'পৃষ্ঠার নাম (বাংলা - পারার নামের নিচে থাকবে)'
+        description: 'পৃষ্ঠার নাম (যেমন: পৃষ্ঠা : ০১)'
         required: true
         type: string
       subtitle_text:
@@ -37,7 +37,7 @@ jobs:
         run: |
           python3 << 'PY'
           from PIL import Image, ImageDraw, ImageFont
-          import json, os, shutil
+          import json, os, shutil, urllib.request
 
           BG="src/background.jpg"
           LOGO="src/logo.jpg"
@@ -45,13 +45,24 @@ jobs:
           OUT="output"
           FONT_BN="src/solaimanlipi.ttf"
           FONT_AR="src/noorehuda.ttf"
+          FONT_SA="src/amiri.ttf" # ﷺ এর জন্য
+
+          # ﷺ এর জন্য ফন্ট ডাউনলোড - এই ফন্টে ﷺ আছে
+          if not os.path.exists(FONT_SA):
+              try:
+                  print("Downloading Amiri font for ﷺ...")
+                  os.makedirs("src", exist_ok=True)
+                  urllib.request.urlretrieve("https://github.com/google/fonts/raw/main/ofl/amiri/Amiri-Regular.ttf", FONT_SA)
+              except Exception as e:
+                  print(f"Amiri download failed: {e}, will use {FONT_AR}")
+                  FONT_SA = FONT_AR
 
           def normalize_ar(text):
               return text.replace('\u0671', '\u0627')
 
-          PARA=normalize_ar(os.environ.get("ARABIC_NAME","").strip())
-          PAGE=os.environ.get("BANGLA_NAME","").strip()
-          SUB=os.environ.get("SUBTITLE_TEXT","").strip() or "প্রিয় নবী ﷺ'র নূর ও প্রকাশ প্রসঙ্গে"
+          PARA_RAW=os.environ.get("ARABIC_NAME","").strip()
+          PAGE_RAW=os.environ.get("BANGLA_NAME","").strip()
+          SUB_RAW=os.environ.get("SUBTITLE_TEXT","").strip() or "প্রিয় নবী ﷺ'র নূর ও প্রকাশ প্রসঙ্গে"
 
           if os.path.exists(OUT):
               shutil.rmtree(OUT)
@@ -66,35 +77,54 @@ jobs:
           LEFT_W=int(W*0.22)
           SCALE=W/1280
 
-          def font(is_ar, dp):
-              path=FONT_AR if is_ar else FONT_BN
+          def font(path, dp):
               try: return ImageFont.truetype(path, int(dp*SCALE))
               except: return ImageFont.load_default()
 
-          # FIX: ﷺ অংশে ফন্ট ইউজ না করার মানে - বাংলা ফন্টে নেই, তাই শুধু ওই চিহ্নটা আরবি ফন্টে আঁকবে, শব্দ ভাঙবে না
-          def draw_bn_with_sallallahu(draw_obj, x, y, text, font_bn, font_ar, fill):
-              # ﷺ দিয়ে ভাগ করো, প্রতি টুকরা আস্ত থাকবে
+          def draw_mixed(draw_obj, x, y, text, fn_bn, fn_sa, fill):
+              """বাংলা শব্দ আস্ত রেখে শুধু ﷺ টা আলাদা ফন্টে আঁকবে"""
               parts = text.split('ﷺ')
               cur_x = x
               for i, part in enumerate(parts):
                   if part:
-                      draw_obj.text((cur_x, y), part, font=font_bn, fill=fill)
-                      cur_x += draw_obj.textlength(part, font=font_bn)
+                      draw_obj.text((cur_x, y), part, font=fn_bn, fill=fill)
+                      cur_x += draw_obj.textlength(part, font=fn_bn)
                   if i < len(parts)-1:
-                      # এই অংশটাই আরবি ফন্টে
-                      draw_obj.text((cur_x, y), 'ﷺ', font=font_ar, fill=fill)
-                      cur_x += draw_obj.textlength('ﷺ', font=font_ar)
+                      draw_obj.text((cur_x, y), 'ﷺ', font=fn_sa, fill=fill)
+                      cur_x += draw_obj.textlength('ﷺ', font=fn_sa)
               return cur_x
 
-          def textlength_mixed(text, font_bn, font_ar, draw_obj):
+          def length_mixed(text, fn_bn, fn_sa, draw_obj):
               parts = text.split('ﷺ')
               w=0
               for i, part in enumerate(parts):
-                  if part:
-                      w+=draw_obj.textlength(part, font=font_bn)
-                  if i < len(parts)-1:
-                      w+=draw_obj.textlength('ﷺ', font=font_ar)
+                  if part: w+=draw_obj.textlength(part, font=fn_bn)
+                  if i < len(parts)-1: w+=draw_obj.textlength('ﷺ', font=fn_sa)
               return w
+
+          def wrap_mixed(text, fn_bn, fn_sa, max_w, draw_obj):
+              lines=[]; cur=""
+              for w in text.split():
+                  test=f"{cur} {w}".strip()
+                  if length_mixed(test, fn_bn, fn_sa, draw_obj) <= max_w:
+                      cur=test
+                  else:
+                      if cur: lines.append(cur)
+                      cur=w
+              if cur: lines.append(cur)
+              return lines
+
+          def wrap_simple(text, fn, max_w, draw_obj):
+              lines=[]; cur=""
+              for w in text.split():
+                  test=f"{cur} {w}".strip()
+                  if draw_obj.textlength(test, font=fn) <= max_w:
+                      cur=test
+                  else:
+                      if cur: lines.append(cur)
+                      cur=w
+              if cur: lines.append(cur)
+              return lines
 
           with open(DATA, encoding="utf-8") as f:
               data=json.load(f)
@@ -115,60 +145,49 @@ jobs:
                       bg.paste(logo,(int((LEFT_W-ls)//2), int(30*SCALE)), logo)
                   except: pass
 
-              f_title_bn=font(False, 34)
-              f_title_ar=font(True, 34)
-              f_sub_bn=font(False, 26)
-              f_sub_ar=font(True, 26)
-              f_para=font(True, 52)
-              f_page_bn=font(False, 48)
-              f_page_ar=font(True, 48)
-              f_num=font(False, 42)
-              f_ar=font(True, 78)
-              f_tr=font(False, 40)
-              f_bn=font(False, 46)
-              f_label=font(False, 36)
+              f_title_bn=font(FONT_BN, 34)
+              f_title_sa=font(FONT_SA, 34)
+              f_sub_bn=font(FONT_BN, 26)
+              f_sub_sa=font(FONT_SA, 26)
+              f_para_bn=font(FONT_BN, 44)
+              f_para_sa=font(FONT_SA, 44)
+              f_page_bn=font(FONT_BN, 44)
+              f_page_sa=font(FONT_SA, 44)
+              f_num=font(FONT_BN, 42)
+              f_ar=font(FONT_AR, 78)
+              f_tr=font(FONT_BN, 40)
+              f_bn=font(FONT_BN, 46)
+              f_label=font(FONT_BN, 36)
 
               max_left=LEFT_W-int(40*SCALE)
               max_right=W-LEFT_W-int(140*SCALE)
 
-              def wrap(text, fn_bn, fn_ar, max_w):
-                  # ﷺ সহ মাপ
-                  lines=[]; cur=""
-                  for w in text.split():
-                      test=f"{cur} {w}".strip()
-                      if textlength_mixed(test, fn_bn, fn_ar, draw) <= max_w:
-                          cur=test
-                      else:
-                          if cur: lines.append(cur)
-                          cur=w
-                  if cur: lines.append(cur)
-                  return lines
-
               y=int(260*SCALE)
-              # টাইটেল - ﷺ সহ
-              title_text="মাজমূ’আহ্ সালাওয়াতির রসূল ﷺ"
-              for line in wrap(title_text, f_title_bn, f_title_ar, max_left):
-                  w=textlength_mixed(line, f_title_bn, f_title_ar, draw)
+              title="মাজমূ’আহ্ সালাওয়াতির রসূল ﷺ"
+              for line in wrap_mixed(title, f_title_bn, f_title_sa, max_left, draw):
+                  w=length_mixed(line, f_title_bn, f_title_sa, draw)
                   sx=(LEFT_W-w)//2
-                  draw_bn_with_sallallahu(draw, sx, y, line, f_title_bn, f_title_ar, (15,25,85))
+                  draw_mixed(draw, sx, y, line, f_title_bn, f_title_sa, (15,25,85))
                   y+=int(34*SCALE*1.5)
               y+=int(6*SCALE)
-              for line in wrap(SUB, f_sub_bn, f_sub_ar, max_left):
-                  w=textlength_mixed(line, f_sub_bn, f_sub_ar, draw)
+              for line in wrap_mixed(SUB_RAW, f_sub_bn, f_sub_sa, max_left, draw):
+                  w=length_mixed(line, f_sub_bn, f_sub_sa, draw)
                   sx=(LEFT_W-w)//2
-                  draw_bn_with_sallallahu(draw, sx, y, line, f_sub_bn, f_sub_ar, (60,60,80))
+                  draw_mixed(draw, sx, y, line, f_sub_bn, f_sub_sa, (60,60,80))
                   y+=int(26*SCALE*1.45)
 
               y+=int(16*SCALE)
               draw.line([(int(40*SCALE), y), (LEFT_W-int(40*SCALE), y)], fill=(100,100,120), width=2)
 
-              bottom_y = H - int(160*SCALE)
-              # PARA আরবি, তাই সরাসরি
-              pw=draw.textlength(PARA, font=f_para)
-              draw.text(((LEFT_W-pw)//2, bottom_y - int(80*SCALE)), PARA, font=f_para, fill=(20,20,60))
-              # PAGE তেও ﷺ থাকতে পারে
-              pgw=textlength_mixed(PAGE, f_page_bn, f_page_ar, draw)
-              draw_bn_with_sallallahu(draw, (LEFT_W-pgw)//2, bottom_y, PAGE, f_page_bn, f_page_ar, (20,20,60))
+              # পারা + পৃষ্ঠা - এখন দুটোই দেখা যাবে, ﷺ সহ
+              para_y = H - int(200*SCALE)
+              page_y = H - int(110*SCALE)
+
+              pw=length_mixed(PARA_RAW, f_para_bn, f_para_sa, draw)
+              draw_mixed(draw, (LEFT_W-pw)//2, para_y, PARA_RAW, f_para_bn, f_para_sa, (20,20,60))
+
+              pgw=length_mixed(PAGE_RAW, f_page_bn, f_page_sa, draw)
+              draw_mixed(draw, (LEFT_W-pgw)//2, page_y, PAGE_RAW, f_page_bn, f_page_sa, (20,20,60))
 
               # ID Circle
               dia=int(110*SCALE)
@@ -178,9 +197,10 @@ jobs:
               nw=draw.textlength(id_bn, font=f_num)
               draw.text((cx+(dia-nw)//2, cy+(dia-int(42*SCALE))//2), id_bn, font=f_num, fill=(255,255,255))
 
-              ar_lines=wrap(normalize_ar(item.get('arabic','')), f_ar, f_ar, max_right)
-              tr_lines=wrap(item.get('transliteration',''), f_tr, f_tr, max_right)
-              bn_lines=wrap(item.get('bengali',''), f_bn, f_bn, max_right)
+              # ডান পাশ
+              ar_lines=wrap_simple(normalize_ar(item.get('arabic','')), f_ar, max_right, draw)
+              tr_lines=wrap_simple(item.get('transliteration',''), f_tr, max_right, draw)
+              bn_lines=wrap_simple(item.get('bengali',''), f_bn, max_right, draw)
 
               total=len(ar_lines)*int(78*SCALE*1.5)+len(tr_lines)*int(40*SCALE*1.5)+len(bn_lines)*int(46*SCALE*1.4)+250
               sy=max(int(140*SCALE), (H-total)//2)
@@ -201,6 +221,7 @@ jobs:
                   yy+=int(46*SCALE*1.4)
 
               bg.save(os.path.join(OUT, filename), "JPEG", quality=95, subsampling=0)
+              print(f"Done {filename}")
 
           PY
 
@@ -216,5 +237,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add -f output/
-          git commit -m "fix: keep ﷺ with ar font, no per-char break" || echo "no changes"
+          git commit -m "fix: para visible + ﷺ with amiri font" || echo "no changes"
           git push
