@@ -93,10 +93,6 @@ jobs:
           PAGE_RAW=os.environ.get("PAGE_NAME","").strip()
           SUB_RAW=os.environ.get("SUBTITLE_TEXT","").strip() or "প্রিয় নবী ﷺ'র নূর ও প্রকাশ প্রসঙ্গে"
 
-          print(f"[DEBUG] PARA_RAW = '{PARA_RAW}'")
-          print(f"[DEBUG] PAGE_RAW = '{PAGE_RAW}'")
-          print(f"[DEBUG] SUB_RAW = '{SUB_RAW}'")
-
           if not PARA_RAW:
               PARA_RAW = "পারা : ০১"
           if not PAGE_RAW:
@@ -109,13 +105,13 @@ jobs:
           EN_TO_BN=str.maketrans("0123456789","০১২৩৪৫৬৭৮৯")
           def to_bn(s): return str(s).translate(EN_TO_BN)
 
-          # A4 Landscape রেশিও (3508 x 2480 pixels @ 300 DPI)
-          W, H = 3508, 2480
+          # 16:9 Landscape Aspect Ratio (3840 x 2160 - 4K Ultra HD)
+          W, H = 3840, 2160
           bg_img=Image.open(BG).convert("RGB") if os.path.exists(BG) else Image.new("RGB",(W,H),(232,236,244))
           bg_img = bg_img.resize((W, H), Image.LANCZOS)
           
           LEFT_W=int(W*0.22)
-          SCALE=W/3508.0
+          SCALE=W/3840.0
 
           def font(path, dp):
               try: return ImageFont.truetype(path, int(dp*SCALE))
@@ -166,107 +162,127 @@ jobs:
 
               if os.path.exists(LOGO):
                   try:
-                      ls=int(320*SCALE)
+                      ls=int(300*SCALE)
                       logo=Image.open(LOGO).convert("RGBA").resize((ls,ls), Image.LANCZOS)
-                      bg.paste(logo,(int((LEFT_W-ls)//2), int(80*SCALE)), logo)
+                      bg.paste(logo,(int((LEFT_W-ls)//2), int(70*SCALE)), logo)
                   except: pass
 
-              f_title_bn=font(FONT_BN, 60)
-              f_title_sa=font(FONT_SA, 60)
-              f_sub_bn=font(FONT_BN, 46)
-              f_sub_sa=font(FONT_SA, 46)
-              f_para_bn=font(FONT_BN, 72)
-              f_para_sa=font(FONT_SA, 72)
-              f_page_bn=font(FONT_BN, 72)
-              f_page_sa=font(FONT_SA, 72)
-              f_num=font(FONT_BN, 70)
+              f_title_bn=font(FONT_BN, 55)
+              f_title_sa=font(FONT_SA, 55)
+              f_sub_bn=font(FONT_BN, 42)
+              f_sub_sa=font(FONT_SA, 42)
+              f_para_bn=font(FONT_BN, 65)
+              f_para_sa=font(FONT_SA, 65)
+              f_page_bn=font(FONT_BN, 65)
+              f_page_sa=font(FONT_SA, 65)
+              f_num=font(FONT_BN, 65)
 
               max_left=LEFT_W-int(80*SCALE)
-              max_right=W-LEFT_W-int(280*SCALE)
+              max_right=W-LEFT_W-int(320*SCALE)
 
-              y=int(450*SCALE)
+              y=int(400*SCALE)
               title="মাজমূ’আহ্ সালাওয়াতির রসূল ﷺ"
               for line in wrap_mixed(title, f_title_bn, f_title_sa, max_left, draw):
                   w=length_mixed(line, f_title_bn, f_title_sa, draw)
                   sx=(LEFT_W-w)//2
                   draw_mixed(draw, sx, y, line, f_title_bn, f_title_sa, (15,25,85))
-                  y+=int(60*SCALE*1.5)
+                  y+=int(55*SCALE*1.5)
 
               y+=int(10*SCALE)
               for line in wrap_mixed(SUB_RAW, f_sub_bn, f_sub_sa, max_left, draw):
                   w=length_mixed(line, f_sub_bn, f_sub_sa, draw)
                   sx=(LEFT_W-w)//2
                   draw_mixed(draw, sx, y, line, f_sub_bn, f_sub_sa, (60,60,80))
-                  y+=int(46*SCALE*1.45)
+                  y+=int(42*SCALE*1.45)
 
               y+=int(30*SCALE)
               draw.line([(int(80*SCALE), y), (LEFT_W-int(80*SCALE), y)], fill=(100,100,120), width=3)
 
-              para_y = H - int(360*SCALE)
-              page_y = H - int(200*SCALE)
+              para_y = H - int(320*SCALE)
+              page_y = H - int(180*SCALE)
               pw=length_mixed(PARA_RAW, f_para_bn, f_para_sa, draw)
               draw_mixed(draw, (LEFT_W-pw)//2, para_y, PARA_RAW, f_para_bn, f_para_sa, (20,20,60))
               pgw=length_mixed(PAGE_RAW, f_page_bn, f_page_sa, draw)
               draw_mixed(draw, (LEFT_W-pgw)//2, page_y, PAGE_RAW, f_page_bn, f_page_sa, (20,20,60))
 
-              dia=int(180*SCALE)
-              cx=W-dia-int(90*SCALE)
-              cy=int(90*SCALE)
+              dia=int(160*SCALE)
+              cx=W-dia-int(80*SCALE)
+              cy=int(80*SCALE)
               draw.ellipse([(cx,cy),(cx+dia,cy+dia)], fill=(35,45,85))
               nw=draw.textlength(id_bn, font=f_num)
-              draw.text((cx+(dia-nw)//2, cy+(dia-int(70*SCALE))//2), id_bn, font=f_num, fill=(255,255,255))
+              draw.text((cx+(dia-nw)//2, cy+(dia-int(65*SCALE))//2), id_bn, font=f_num, fill=(255,255,255))
 
               arabic_txt = normalize_ar(item.get('arabic',''))
               tr_txt = item.get('transliteration','')
               bn_txt = item.get('bengali','')
 
-              f_ar = font(FONT_AR, 100)
-              f_ar_sa = font(FONT_SA, 100)
-              f_tr = font(FONT_BN, 60)
-              f_tr_sa = font(FONT_SA, 60)
-              f_bn = font(FONT_BN, 68)
-              f_bn_sa = font(FONT_SA, 68)
-              f_label = font(FONT_BN, 62)
+              # 16:9 স্ক্রিনের জন্য অপটিমাইজড ডাইনামিক স্কেলিং
+              font_configs = [
+                  (90, 52, 58, 50, 1.45, 1.4, 1.35, 45, 30, 45),
+                  (80, 46, 50, 44, 1.4, 1.35, 1.3, 35, 25, 35),
+                  (70, 40, 44, 38, 1.35, 1.3, 1.25, 30, 20, 30),
+                  (60, 34, 38, 32, 1.3, 1.25, 1.2, 25, 15, 25)
+              ]
 
-              ar_lines = wrap_mixed(arabic_txt, f_ar, f_ar_sa, max_right, draw)
-              tr_lines = wrap_mixed(tr_txt, f_tr, f_tr_sa, max_right, draw)
-              bn_lines = wrap_mixed(bn_txt, f_bn, f_bn_sa, max_right, draw)
+              top_margin = int(180 * SCALE)
+              bottom_margin = int(140 * SCALE)
+              max_avail_h = H - top_margin - bottom_margin
 
-              line_h_ar = int(100 * SCALE * 1.5)
-              line_h_tr = int(60 * SCALE * 1.45)
-              line_h_bn = int(68 * SCALE * 1.4)
-              lbl_step = int(62 * SCALE * 1.3)
+              for sz_ar, sz_tr, sz_bn, sz_lbl, lh_ar, lh_tr, lh_bn, g1, g2, g3 in font_configs:
+                  f_ar_t = font(FONT_AR, sz_ar)
+                  f_ar_sa_t = font(FONT_SA, sz_ar)
+                  f_tr_t = font(FONT_BN, sz_tr)
+                  f_tr_sa_t = font(FONT_SA, sz_tr)
+                  f_bn_t = font(FONT_BN, sz_bn)
+                  f_bn_sa_t = font(FONT_SA, sz_bn)
 
-              gap1 = int(60 * SCALE)
-              gap2 = int(40 * SCALE)
-              gap3 = int(30 * SCALE)
+                  ar_lines_t = wrap_mixed(arabic_txt, f_ar_t, f_ar_sa_t, max_right, draw)
+                  tr_lines_t = wrap_mixed(tr_txt, f_tr_t, f_tr_sa_t, max_right, draw)
+                  bn_lines_t = wrap_mixed(bn_txt, f_bn_t, f_bn_sa_t, max_right, draw)
 
-              total_h = (len(ar_lines) * line_h_ar + gap1 +
-                         len(tr_lines) * line_h_tr + gap2 +
-                         lbl_step + gap3 +
-                         len(bn_lines) * line_h_bn)
+                  tot_h = (len(ar_lines_t) * int(sz_ar * SCALE * lh_ar) +
+                           int(g1 * SCALE) +
+                           len(tr_lines_t) * int(sz_tr * SCALE * lh_tr) +
+                           int(g2 * SCALE) +
+                           int(sz_lbl * SCALE * 1.3) +
+                           int(g3 * SCALE) +
+                           len(bn_lines_t) * int(sz_bn * SCALE * lh_bn))
 
-              sy = max(int(200 * SCALE), (H - total_h) // 2)
+                  if tot_h <= max_avail_h or sz_ar == font_configs[-1][0]:
+                      f_ar, f_ar_sa = f_ar_t, f_ar_sa_t
+                      f_tr, f_tr_sa = f_tr_t, f_tr_sa_t
+                      f_bn, f_bn_sa = f_bn_t, f_bn_sa_t
+                      f_label = font(FONT_BN, sz_lbl)
+                      ar_lines, tr_lines, bn_lines = ar_lines_t, tr_lines_t, bn_lines_t
+                      line_h_ar = int(sz_ar * SCALE * lh_ar)
+                      line_h_tr = int(sz_tr * SCALE * lh_tr)
+                      line_h_bn = int(sz_bn * SCALE * lh_bn)
+                      gap1, gap2, gap3 = int(g1 * SCALE), int(g2 * SCALE), int(g3 * SCALE)
+                      lbl_step = int(sz_lbl * SCALE * 1.3)
+                      total = tot_h
+                      break
+
+              sy = max(top_margin, (H - total) // 2)
               yy = sy
 
               for line in ar_lines:
                   ww = length_mixed(line, f_ar, f_ar_sa, draw)
-                  draw_mixed(draw, W - int(120 * SCALE) - ww, yy, line, f_ar, f_ar_sa, (0, 0, 0))
+                  draw_mixed(draw, W - int(140 * SCALE) - ww, yy, line, f_ar, f_ar_sa, (0, 0, 0))
                   yy += line_h_ar
 
               yy += gap1
 
               for line in tr_lines:
-                  draw_mixed(draw, LEFT_W + int(90 * SCALE), yy, line, f_tr, f_tr_sa, (60, 60, 60))
+                  draw_mixed(draw, LEFT_W + int(100 * SCALE), yy, line, f_tr, f_tr_sa, (60, 60, 60))
                   yy += line_h_tr
 
               yy += gap2
 
-              draw.text((LEFT_W + int(90 * SCALE), yy), "বঙ্গানুবাদ:", font=f_label, fill=(20, 40, 120))
+              draw.text((LEFT_W + int(100 * SCALE), yy), "বঙ্গানুবাদ:", font=f_label, fill=(20, 40, 120))
               yy += lbl_step + gap3
 
               for line in bn_lines:
-                  draw_mixed(draw, LEFT_W + int(90 * SCALE), yy, line, f_bn, f_bn_sa, (15, 25, 85))
+                  draw_mixed(draw, LEFT_W + int(100 * SCALE), yy, line, f_bn, f_bn_sa, (15, 25, 85))
                   yy += line_h_bn
 
               bg.save(os.path.join(OUT, filename), "JPEG", quality=95, subsampling=0)
@@ -283,5 +299,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add -f output/
-          git commit -m "fix: set image dimensions to A4 landscape (3508x2480)" || echo "no changes"
+          git commit -m "fix: set image dimensions to 16:9 Landscape (3840x2160) with auto-scaling" || echo "no changes"
           git push
