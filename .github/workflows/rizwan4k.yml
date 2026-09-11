@@ -1,4 +1,4 @@
-name: Generate Video from Images and Audio
+name: Generate 4K Video from Images and Audio
 
 on:
   workflow_dispatch: {}   # Manually run from the Actions tab
@@ -12,18 +12,19 @@ jobs:
     runs-on: ubuntu-latest
 
     timeout-minutes: 340
-    # GitHub free runner-এর সময়সীমার মধ্যে নিরাপদ মার্জিন
+    # GitHub free runner-এর জন্য নিরাপদ timeout
 
 
     steps:
 
       # ============================================================
-      # 1. Checkout Repository
+      # 1. Checkout repository
       # ============================================================
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           lfs: true
+          # Git LFS ব্যবহার করলে সেটাও pull করবে
 
 
       # ============================================================
@@ -36,7 +37,7 @@ jobs:
 
 
       # ============================================================
-      # 3. Verify Required Folders
+      # 3. Verify folders exist
       # ============================================================
       - name: Verify folders exist
         run: |
@@ -57,24 +58,32 @@ jobs:
 
 
       # ============================================================
-      # 4. Build Per-Pair Video Segments
+      # 4. Build per-pair video segments
       #
-      # IMPORTANT:
+      # IMAGE RESOLUTION POLICY:
       #
-      # এখানে Image-এর আসল Resolution 그대로 রাখা হবে।
+      # Width:
+      #   সবসময় 3840 px
       #
-      # অর্থাৎ:
+      # Height:
+      #   Image-এর আসল Height রাখা হবে।
       #
-      # Image = 3840 × 2160
-      # Video = 3840 × 2160
+      # কিন্তু H.264-এর জন্য Width/Height অবশ্যই even হতে হবে।
       #
-      # Image = 3840 × 2500
-      # Video = 3840 × 2500
+      # তাই:
       #
-      # Image = 3840 × 3000
-      # Video = 3840 × 3000
+      # 3840x2160 → 3840x2160
+      # 3840x2731 → 3840x2732
+      # 3840x2732 → 3840x2732
+      # 3840x3001 → 3840x3002
       #
-      # কোনো 3840×2160 forced resize/pad করা হবে না।
+      # Odd Height হলে শুধু নিচে সর্বোচ্চ 1px padding যোগ হবে।
+      #
+      # কোনো:
+      # - crop হবে না
+      # - 3840x2160 resize হবে না
+      # - aspect ratio পরিবর্তন হবে না
+      # - image stretch হবে না
       # ============================================================
       - name: Build per-pair video segments
         run: |
@@ -86,7 +95,7 @@ jobs:
 
 
           # --------------------------------------------------------
-          # rizwanaudio ফোল্ডারের প্রতিটি MP3 ধরে matching JPG খোঁজা
+          # rizwanaudio ফোল্ডারের প্রতিটি MP3 ফাইল
           # --------------------------------------------------------
           for audio in rizwanaudio/*.mp3; do
 
@@ -98,14 +107,11 @@ jobs:
 
 
             # ------------------------------------------------------
-            # Filename বের করা
+            # Matching filename
             #
-            # উদাহরণ:
-            #
-            # rizwanaudio/0001.mp3
-            #
-            # filename = 0001
-            # image = output/0001.jpg
+            # 0001.mp3
+            #     ↓
+            # output/0001.jpg
             # ------------------------------------------------------
             filename=$(basename "$audio" .mp3)
 
@@ -113,7 +119,7 @@ jobs:
 
 
             # ------------------------------------------------------
-            # Matching Image আছে কিনা যাচাই
+            # Matching JPG আছে কিনা
             # ------------------------------------------------------
             if [ ! -f "$image" ]; then
               echo "::warning::${filename}.jpg পাওয়া যায়নি, এই পেয়ারটি স্কিপ করা হলো"
@@ -130,10 +136,7 @@ jobs:
 
 
             # ------------------------------------------------------
-            # Image-এর আসল Width ও Height বের করা
-            #
-            # এখানে Image resize করা হচ্ছে না।
-            # শুধু dimension পড়া হচ্ছে।
+            # Image-এর আসল Width
             # ------------------------------------------------------
             image_width=$(ffprobe \
               -v error \
@@ -142,6 +145,10 @@ jobs:
               -of csv=p=0 \
               "$image")
 
+
+            # ------------------------------------------------------
+            # Image-এর আসল Height
+            # ------------------------------------------------------
             image_height=$(ffprobe \
               -v error \
               -select_streams v:0 \
@@ -150,14 +157,14 @@ jobs:
               "$image")
 
 
-            echo "Image Width  = ${image_width}px"
-            echo "Image Height = ${image_height}px"
+            echo "Original Image Width  = ${image_width}px"
+            echo "Original Image Height = ${image_height}px"
 
 
             # ------------------------------------------------------
-            # Width অবশ্যই 3840 হতে হবে
+            # Width validation
             #
-            # আগের image-generation YML অনুযায়ী Width locked:
+            # আগের Image Generator YML অনুযায়ী:
             # TARGET_W = 3840
             # ------------------------------------------------------
             if [ "$image_width" != "3840" ]; then
@@ -167,7 +174,7 @@ jobs:
 
 
             # ------------------------------------------------------
-            # Height অবশ্যই 0-এর বেশি হতে হবে
+            # Height validation
             # ------------------------------------------------------
             if [ "$image_height" -le 0 ]; then
               echo "::error::${filename}.jpg-এর Height invalid"
@@ -176,7 +183,33 @@ jobs:
 
 
             # ------------------------------------------------------
-            # Audio Duration বের করা
+            # H.264-এর জন্য Height even হতে হবে
+            #
+            # যদি:
+            # 2731 → 2732
+            #
+            # যদি:
+            # 2732 → 2732
+            #
+            # যদি:
+            # 3001 → 3002
+            #
+            # অর্থাৎ সর্বোচ্চ 1px padding।
+            # ------------------------------------------------------
+            video_height=$(( (image_height + 1) / 2 * 2 ))
+
+
+            # কত pixel padding লাগছে
+            padding_height=$(( video_height - image_height ))
+
+
+            echo "Video Width         = ${image_width}px"
+            echo "Video Height        = ${video_height}px"
+            echo "Bottom Padding      = ${padding_height}px"
+
+
+            # ------------------------------------------------------
+            # Audio duration
             # ------------------------------------------------------
             duration=$(ffprobe \
               -v error \
@@ -185,48 +218,106 @@ jobs:
               "$audio")
 
 
-            echo "Audio Duration = ${duration} seconds"
+            echo "Audio Duration      = ${duration} seconds"
 
 
             # ======================================================
-            # FFmpeg
+            # FFmpeg Video Creation
             #
             # IMPORTANT:
             #
-            # এখানে কোনো scale=3840:2160 নেই।
+            # Image-এর Width 3840-ই থাকবে।
             #
-            # কোনো pad=3840:2160 নেই।
+            # Image-এর original Height রাখা হবে।
+            #
+            # Odd Height হলে শুধুমাত্র 1px পর্যন্ত bottom padding।
             #
             # কোনো crop নেই।
-            #
-            # Image-এর exact resolution ব্যবহার করা হচ্ছে।
+            # কোনো 3840x2160 forced resize নেই।
             # ======================================================
-            ffmpeg -y \
-              -loop 1 \
-              -i "$image" \
-              -i "$audio" \
-              \
-              -c:v libx264 \
-              -preset medium \
-              -crf 18 \
-              -tune stillimage \
-              \
-              -c:a aac \
-              -b:a 192k \
-              \
-              -pix_fmt yuv420p \
-              \
-              -vf "setsar=1,fps=30" \
-              \
-              -shortest \
-              -t "$duration" \
-              \
-              "segments/${filename}.mp4"
+
+            if [ "$padding_height" -eq 0 ]; then
+
+              # ----------------------------------------------------
+              # Height already even
+              # তাই কোনো padding দরকার নেই
+              # ----------------------------------------------------
+              echo "✓ Height already even. No padding required."
 
 
-            # ------------------------------------------------------
-            # Generated Segment যাচাই
-            # ------------------------------------------------------
+              ffmpeg -y \
+                -loop 1 \
+                -framerate 30 \
+                -i "$image" \
+                -i "$audio" \
+                \
+                -c:v libx264 \
+                -preset medium \
+                -crf 18 \
+                -tune stillimage \
+                \
+                -c:a aac \
+                -b:a 192k \
+                \
+                -pix_fmt yuv420p \
+                \
+                -vf "setsar=1" \
+                \
+                -t "$duration" \
+                -shortest \
+                \
+                "segments/${filename}.mp4"
+
+
+            else
+
+              # ----------------------------------------------------
+              # Height odd
+              #
+              # Bottom-এ 1px পর্যন্ত padding যোগ হবে।
+              #
+              # Example:
+              #
+              # 3840x2731
+              #       ↓
+              # 3840x2732
+              #
+              # Original image-এর কোনো অংশ crop হবে না।
+              # ----------------------------------------------------
+              echo "⚠️ Height is odd."
+              echo "✓ Adding ${padding_height}px bottom padding."
+
+
+              ffmpeg -y \
+                -loop 1 \
+                -framerate 30 \
+                -i "$image" \
+                -i "$audio" \
+                \
+                -c:v libx264 \
+                -preset medium \
+                -crf 18 \
+                -tune stillimage \
+                \
+                -c:a aac \
+                -b:a 192k \
+                \
+                -pix_fmt yuv420p \
+                \
+                -vf "pad=iw:${video_height}:0:0:color=black,setsar=1" \
+                \
+                -t "$duration" \
+                -shortest \
+                \
+                "segments/${filename}.mp4"
+
+            fi
+
+
+            # ======================================================
+            # Generated Segment Verification
+            # ======================================================
+
             segment_width=$(ffprobe \
               -v error \
               -select_streams v:0 \
@@ -243,32 +334,53 @@ jobs:
               "segments/${filename}.mp4")
 
 
-            echo "Segment Width  = ${segment_width}px"
-            echo "Segment Height = ${segment_height}px"
+            echo ""
+            echo "Generated Segment:"
+            echo "  Width  = ${segment_width}px"
+            echo "  Height = ${segment_height}px"
 
 
             # ------------------------------------------------------
-            # Segment Resolution যাচাই
-            #
-            # Input JPG এবং Output MP4-এর resolution একই হতে হবে।
+            # Width verification
             # ------------------------------------------------------
-            if [ "$segment_width" != "$image_width" ] || \
-               [ "$segment_height" != "$image_height" ]; then
-
-              echo "::error::Video resolution Image-এর সাথে match করছে না!"
-              echo "::error::Image   = ${image_width}x${image_height}"
-              echo "::error::Video   = ${segment_width}x${segment_height}"
-
+            if [ "$segment_width" != "3840" ]; then
+              echo "::error::Video Width ${segment_width}px। Expected 3840px"
               exit 1
             fi
 
 
-            echo "✓ Resolution verified:"
-            echo "  ${segment_width}x${segment_height}"
+            # ------------------------------------------------------
+            # Height verification
+            # ------------------------------------------------------
+            if [ "$segment_height" != "$video_height" ]; then
+              echo "::error::Video Height ${segment_height}px। Expected ${video_height}px"
+              exit 1
+            fi
 
 
             # ------------------------------------------------------
-            # Concat List-এ Segment যোগ
+            # H.264 even-dimension verification
+            # ------------------------------------------------------
+            if [ $((segment_width % 2)) -ne 0 ]; then
+              echo "::error::Video Width odd হয়েছে: ${segment_width}px"
+              exit 1
+            fi
+
+
+            if [ $((segment_height % 2)) -ne 0 ]; then
+              echo "::error::Video Height odd হয়েছে: ${segment_height}px"
+              exit 1
+            fi
+
+
+            echo "✓ Video resolution verified"
+            echo "✓ Width  = ${segment_width}px"
+            echo "✓ Height = ${segment_height}px"
+            echo "✓ Both dimensions are divisible by 2"
+
+
+            # ------------------------------------------------------
+            # Concat list
             # ------------------------------------------------------
             echo "file '$(pwd)/segments/${filename}.mp4'" >> concat_list.txt
 
@@ -280,7 +392,7 @@ jobs:
 
 
           # ========================================================
-          # Show concat list
+          # Display concat list
           # ========================================================
           echo ""
           echo "============================================================"
@@ -291,7 +403,103 @@ jobs:
 
 
       # ============================================================
-      # 5. Concatenate All Segments
+      # 5. Validate segment compatibility before concatenation
+      #
+      # IMPORTANT:
+      #
+      # আপনার Image Generator-এর Height dynamic।
+      #
+      # তাই সব image-এর Height একই নাও হতে পারে।
+      #
+      # concat -c copy করার জন্য সব segment-এর video stream
+      # parameters/resolution একই হওয়া নিরাপদ।
+      #
+      # এখানে প্রথম segment-এর resolution reference হিসেবে নেওয়া
+      # হচ্ছে এবং পরবর্তী segment-এর resolution আলাদা হলে error
+      # দেখানো হবে।
+      # ============================================================
+      - name: Validate segment compatibility
+        run: |
+          set -e
+
+          if [ ! -s concat_list.txt ]; then
+            echo "::error::কোনো valid video segment তৈরি হয়নি"
+            exit 1
+          fi
+
+
+          first_segment=$(sed -n "s/^file '\\(.*\\)'$/\1/p" concat_list.txt | head -n 1)
+
+
+          if [ -z "$first_segment" ]; then
+            echo "::error::প্রথম segment পাওয়া যায়নি"
+            exit 1
+          fi
+
+
+          reference_width=$(ffprobe \
+            -v error \
+            -select_streams v:0 \
+            -show_entries stream=width \
+            -of csv=p=0 \
+            "$first_segment")
+
+
+          reference_height=$(ffprobe \
+            -v error \
+            -select_streams v:0 \
+            -show_entries stream=height \
+            -of csv=p=0 \
+            "$first_segment")
+
+
+          echo "Reference Resolution:"
+          echo "${reference_width}x${reference_height}"
+
+
+          while IFS= read -r line; do
+
+            segment=$(echo "$line" | sed "s/^file '//;s/'$//")
+
+
+            current_width=$(ffprobe \
+              -v error \
+              -select_streams v:0 \
+              -show_entries stream=width \
+              -of csv=p=0 \
+              "$segment")
+
+
+            current_height=$(ffprobe \
+              -v error \
+              -select_streams v:0 \
+              -show_entries stream=height \
+              -of csv=p=0 \
+              "$segment")
+
+
+            echo "$(basename "$segment") → ${current_width}x${current_height}"
+
+
+            if [ "$current_width" != "$reference_width" ] || \
+               [ "$current_height" != "$reference_height" ]; then
+
+              echo "::error::সব video segment-এর resolution একই নয়।"
+              echo "::error::Reference = ${reference_width}x${reference_height}"
+              echo "::error::Current   = ${current_width}x${current_height}"
+              echo "::error::Dynamic-height images-এর কারণে -c copy concatenation করা যাবে না।"
+
+              exit 1
+            fi
+
+          done < concat_list.txt
+
+
+          echo "✓ সব segment-এর resolution compatible"
+
+
+      # ============================================================
+      # 6. Concatenate all segments into final video
       # ============================================================
       - name: Concatenate all segments into final video
         run: |
@@ -312,7 +520,7 @@ jobs:
             -safe 0 \
             -i concat_list.txt \
             -c copy \
-            final_video.mp4
+            final_4k_video.mp4
 
 
           echo ""
@@ -321,33 +529,39 @@ jobs:
           echo "============================================================"
 
 
-          ls -lh final_video.mp4
+          ls -lh final_4k_video.mp4
 
 
           # --------------------------------------------------------
-          # Final Video Resolution
+          # Final Width
           # --------------------------------------------------------
           final_width=$(ffprobe \
             -v error \
             -select_streams v:0 \
             -show_entries stream=width \
             -of csv=p=0 \
-            final_video.mp4)
+            final_4k_video.mp4)
 
 
+          # --------------------------------------------------------
+          # Final Height
+          # --------------------------------------------------------
           final_height=$(ffprobe \
             -v error \
             -select_streams v:0 \
             -show_entries stream=height \
             -of csv=p=0 \
-            final_video.mp4)
+            final_4k_video.mp4)
 
 
+          # --------------------------------------------------------
+          # Final Duration
+          # --------------------------------------------------------
           final_duration=$(ffprobe \
             -v error \
             -show_entries format=duration \
             -of default=noprint_wrappers=1:nokey=1 \
-            final_video.mp4)
+            final_4k_video.mp4)
 
 
           echo ""
@@ -361,25 +575,25 @@ jobs:
 
 
       # ============================================================
-      # 6. Upload Artifact
+      # 7. Upload video as workflow artifact
       # ============================================================
       - name: Upload video as workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: final-video
-          path: final_video.mp4
+          name: final-4k-video
+          path: final_4k_video.mp4
           retention-days: 7
 
 
       # ============================================================
-      # 7. Create GitHub Release
+      # 8. Create GitHub Release with the video
       # ============================================================
       - name: Create GitHub Release with the video
         uses: softprops/action-gh-release@v2
         with:
           tag_name: video-${{ github.run_number }}
           name: 4K Video Build #${{ github.run_number }}
-          files: final_video.mp4
+          files: final_4k_video.mp4
 
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
