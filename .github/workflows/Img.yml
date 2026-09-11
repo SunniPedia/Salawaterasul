@@ -119,9 +119,11 @@ jobs:
           EN_TO_BN=str.maketrans("0123456789","০১২৩৪৫৬৭৮৯")
           def to_bn(s): return str(s).translate(EN_TO_BN)
 
-          W,H=3840,2160
-          bg_img=Image.open(BG).convert("RGB") if os.path.exists(BG) else Image.new("RGB",(W,H),(232,236,244))
-          W,H=bg_img.size
+          # ---- বেস ডাইমেনশন ও স্কেল (background.jpg এর আসল সাইজ থেকে) ----
+          BASE_W, BASE_H = 3840, 2160
+          orig_bg = Image.open(BG).convert("RGB") if os.path.exists(BG) else Image.new("RGB",(BASE_W,BASE_H),(232,236,244))
+          BASE_W, BASE_H = orig_bg.size
+          W = BASE_W
           LEFT_W=int(W*0.22)
           SCALE=W/1280
 
@@ -175,6 +177,29 @@ jobs:
               if cur: lines.append(cur)
               return lines
 
+          def make_canvas(target_h):
+              """background কে stretch না করে, প্রয়োজনে নিচের দিকে extend করে
+                 target_h উচ্চতার একটা canvas বানায়। মূল অংশ অপরিবর্তিত থাকে,
+                 শুধু বাড়তি জায়গাটা bottom edge এর গড় রঙ দিয়ে ভরাট হয়।"""
+              if target_h <= BASE_H:
+                  return orig_bg.copy()
+
+              canvas = Image.new("RGB", (W, target_h), (232,236,244))
+              canvas.paste(orig_bg, (0,0))
+
+              # bottom edge এর কয়েকটা সারির গড় রঙ বের করে সেটা দিয়ে বাকি অংশ ফিল করি
+              strip = orig_bg.crop((0, BASE_H-10, W, BASE_H))
+              avg = tuple(int(c) for c in ImageDraw.Draw(strip).im.convert("RGB").getpixel((0,0))) if False else None
+              # উপরের ট্রিক জটিল/অনির্ভরযোগ্য, তাই সহজ পদ্ধতি: strip রিসাইজ করে বাকি অংশে বসিয়ে দিচ্ছি
+              extend_h = target_h - BASE_H
+              stretched_strip = strip.resize((W, extend_h), Image.LANCZOS)
+              canvas.paste(stretched_strip, (0, BASE_H))
+              return canvas
+
+          # ---- measurement এর জন্য dummy draw object (কোনো ছবি ছাড়াই টেক্সট সাইজ মাপার কাজে ব্যবহার হয়) ----
+          dummy_img = Image.new("RGB", (10, 10))
+          dummy_draw = ImageDraw.Draw(dummy_img)
+
           with open(DATA, encoding="utf-8") as f:
               data=json.load(f)
 
@@ -183,17 +208,10 @@ jobs:
               filename=f"{id_int:04d}.jpg"
               id_bn=to_bn(str(id_int))
 
-              bg=bg_img.resize((W,H), Image.LANCZOS)
-              draw=ImageDraw.Draw(bg)
-              draw.rectangle([0,0,LEFT_W,H], fill=(214,218,228))
+              max_left=LEFT_W-int(40*SCALE)
+              max_right=W-LEFT_W-int(140*SCALE)
 
-              if os.path.exists(LOGO):
-                  try:
-                      ls=int(200*SCALE)
-                      logo=Image.open(LOGO).convert("RGBA").resize((ls,ls), Image.LANCZOS)
-                      bg.paste(logo,(int((LEFT_W-ls)//2), int(30*SCALE)), logo)
-                  except: pass
-
+              # ফন্টগুলো লোড করি (height মাপার আগে দরকার, কারণ wrap_mixed ফন্ট মেট্রিক্স ব্যবহার করে)
               f_title_bn=font(FONT_BN, 34)
               f_title_sa=font(FONT_SA, 34)
               f_sub_bn=font(FONT_BN, 26)
@@ -211,8 +229,33 @@ jobs:
               f_bn_sa=font(FONT_SA, 46)
               f_label=font(FONT_BN, 36)
 
-              max_left=LEFT_W-int(40*SCALE)
-              max_right=W-LEFT_W-int(140*SCALE)
+              # ডান পাশের কনটেন্ট
+              arabic_txt = normalize_ar(item.get('arabic',''))
+              tr_txt = item.get('transliteration','')
+              bn_txt = item.get('bengali','')
+
+              ar_lines=wrap_mixed(arabic_txt, f_ar, f_ar_sa, max_right, dummy_draw)
+              tr_lines=wrap_mixed(tr_txt, f_tr, f_tr_sa, max_right, dummy_draw)
+              bn_lines=wrap_mixed(bn_txt, f_bn, f_bn_sa, max_right, dummy_draw)
+
+              total=len(ar_lines)*int(78*SCALE*1.5)+len(tr_lines)*int(40*SCALE*1.5)+len(bn_lines)*int(46*SCALE*1.4)+250
+
+              # ---- ফন্ট সাইজ ছোট না করে, প্রয়োজনে ছবির height বাড়িয়ে সব কনটেন্ট ধরানো হচ্ছে ----
+              TOP_MARGIN=int(140*SCALE)
+              BOTTOM_MARGIN=int(140*SCALE)
+              required_H = total + TOP_MARGIN + BOTTOM_MARGIN
+              H = max(BASE_H, required_H)
+
+              bg = make_canvas(H)
+              draw=ImageDraw.Draw(bg)
+              draw.rectangle([0,0,LEFT_W,H], fill=(214,218,228))
+
+              if os.path.exists(LOGO):
+                  try:
+                      ls=int(200*SCALE)
+                      logo=Image.open(LOGO).convert("RGBA").resize((ls,ls), Image.LANCZOS)
+                      bg.paste(logo,(int((LEFT_W-ls)//2), int(30*SCALE)), logo)
+                  except: pass
 
               y=int(260*SCALE)
               title="মাজমূ’আহ্ সালাওয়াতির রসূল ﷺ"
@@ -249,18 +292,8 @@ jobs:
               nw=draw.textlength(id_bn, font=f_num)
               draw.text((cx+(dia-nw)//2, cy+(dia-int(42*SCALE))//2), id_bn, font=f_num, fill=(255,255,255))
 
-              # ডান পাশ - এখন এখানেও wrap_mixed/draw_mixed, কারণ data.json এর
-              # arabic/transliteration/bengali field-এও ﷺ থাকতে পারে
-              arabic_txt = normalize_ar(item.get('arabic',''))
-              tr_txt = item.get('transliteration','')
-              bn_txt = item.get('bengali','')
-
-              ar_lines=wrap_mixed(arabic_txt, f_ar, f_ar_sa, max_right, draw)
-              tr_lines=wrap_mixed(tr_txt, f_tr, f_tr_sa, max_right, draw)
-              bn_lines=wrap_mixed(bn_txt, f_bn, f_bn_sa, max_right, draw)
-
-              total=len(ar_lines)*int(78*SCALE*1.5)+len(tr_lines)*int(40*SCALE*1.5)+len(bn_lines)*int(46*SCALE*1.4)+250
-              sy=max(int(140*SCALE), (H-total)//2)
+              # ডান পাশ - ﷺ mixed-font রেন্ডারিং সহ আরবি/উচ্চারণ/বাংলা লেখা
+              sy=max(TOP_MARGIN, (H-total)//2)
               yy=sy
               for line in ar_lines:
                   ww=length_mixed(line, f_ar, f_ar_sa, draw)
@@ -278,7 +311,7 @@ jobs:
                   yy+=int(46*SCALE*1.4)
 
               bg.save(os.path.join(OUT, filename), "JPEG", quality=95, subsampling=0)
-              print(f"Done {filename}")
+              print(f"Done {filename} | H={H} (BASE_H={BASE_H})")
 
           PY
 
@@ -294,5 +327,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add -f output/
-          git commit -m "fix: para visible + verified ﷺ glyph (all text fields)" || echo "no changes"
+          git commit -m "fix: dynamic image height for long text, no more bottom cutoff" || echo "no changes"
           git push
