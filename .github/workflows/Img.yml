@@ -47,10 +47,11 @@ jobs:
           OUT="output"
           FONT_BN="src/solaimanlipi.ttf"
           FONT_AR="src/noorehuda.ttf"
-          FONT_SA="src/amiri.ttf"
-          SALLALLAHU_CP = 0xFDFA
+          FONT_SA="src/amiri.ttf" # ﷺ এর জন্য
+          SALLALLAHU_CP = 0xFDFA # ﷺ এর codepoint
 
           def has_glyph(font_path, codepoint):
+              """ফন্টে আসলেই এই glyph আছে কিনা যাচাই করে (শুধু file exists চেক না)"""
               try:
                   tt = TTFont(font_path)
                   cmap = tt.getBestCmap()
@@ -59,10 +60,12 @@ jobs:
                   print(f" glyph-check ব্যর্থ ({font_path}): {e}")
                   return False
 
+          # ধাপ ১: প্রথমে দেখি FONT_AR (noorehuda) নিজেই ﷺ সাপোর্ট করে কিনা - করলে আলাদা ফন্ট ডাউনলোডের দরকার নেই
           if os.path.exists(FONT_AR) and has_glyph(FONT_AR, SALLALLAHU_CP):
               print(f"{FONT_AR}-এ ﷺ glyph পাওয়া গেছে, সেটাই ব্যবহার হবে।")
               FONT_SA = FONT_AR
           else:
+              # ধাপ ২: amiri.ttf আগে থেকে থাকলেও glyph যাচাই করে নেই (আগের রানে corrupted download থাকতে পারে)
               need_download = True
               if os.path.exists(FONT_SA):
                   if has_glyph(FONT_SA, SALLALLAHU_CP):
@@ -84,6 +87,7 @@ jobs:
                       print("Amiri font ডাউনলোড সফল, ﷺ glyph নিশ্চিত হয়েছে।")
                   except Exception as e:
                       print(f"⚠ Amiri download/verify ব্যর্থ: {e}")
+                      print(f"⚠ ﷺ চিহ্নটি এই রানে সঠিকভাবে নাও দেখাতে পারে — {FONT_AR} দিয়ে fallback করা হচ্ছে।")
                       FONT_SA = FONT_AR
 
           def normalize_ar(text):
@@ -93,9 +97,16 @@ jobs:
           PAGE_RAW=os.environ.get("PAGE_NAME","").strip()
           SUB_RAW=os.environ.get("SUBTITLE_TEXT","").strip() or "প্রিয় নবী ﷺ'র নূর ও প্রকাশ প্রসঙ্গে"
 
+          # ডিবাগ: inputs আসলে কী এসেছে তা log-এ দেখাই, যাতে খালি থাকলে সাথে সাথে বোঝা যায়
+          print(f"[DEBUG] PARA_RAW = '{PARA_RAW}'")
+          print(f"[DEBUG] PAGE_RAW = '{PAGE_RAW}'")
+          print(f"[DEBUG] SUB_RAW = '{SUB_RAW}'")
+
           if not PARA_RAW:
+              print("[WARNING] পারার নাম খালি এসেছে! Workflow trigger করার সময় 'para_name' ফিল্ডে মান দিন।")
               PARA_RAW = "পারা : ০১"
           if not PAGE_RAW:
+              print("[WARNING] পৃষ্ঠার নাম খালি এসেছে! Workflow trigger করার সময় 'page_name' ফিল্ডে মান দিন।")
               PAGE_RAW = "পৃষ্ঠা : ০১"
 
           if os.path.exists(OUT):
@@ -105,19 +116,18 @@ jobs:
           EN_TO_BN=str.maketrans("0123456789","০১২৩৪৫৬৭৮৯")
           def to_bn(s): return str(s).translate(EN_TO_BN)
 
-          # 16:9 Landscape Aspect Ratio (3840 x 2160 - 4K Ultra HD)
-          W, H = 3840, 2160
+          W,H=10240, 7680 # 16:12 (4:3)
           bg_img=Image.open(BG).convert("RGB") if os.path.exists(BG) else Image.new("RGB",(W,H),(232,236,244))
-          bg_img = bg_img.resize((W, H), Image.LANCZOS)
-          
+          W,H=bg_img.size
           LEFT_W=int(W*0.22)
-          SCALE=W/3840.0
+          SCALE=W/1280
 
           def font(path, dp):
               try: return ImageFont.truetype(path, int(dp*SCALE))
               except: return ImageFont.load_default()
 
           def draw_mixed(draw_obj, x, y, text, fn_bn, fn_sa, fill):
+              """বাংলা/আরবি টেক্সট আস্ত রেখে শুধু ﷺ টা আলাদা (glyph-verified) ফন্টে আঁকবে"""
               parts = text.split('ﷺ')
               cur_x = x
               for i, part in enumerate(parts):
@@ -156,76 +166,80 @@ jobs:
               id_int=int(item.get('id',0))
               filename=f"{id_int:04d}.jpg"
               id_bn=to_bn(str(id_int))
-              bg=bg_img.copy()
+              bg=bg_img.resize((W,H), Image.LANCZOS)
               draw=ImageDraw.Draw(bg)
               draw.rectangle([0,0,LEFT_W,H], fill=(214,218,228))
 
               if os.path.exists(LOGO):
                   try:
-                      ls=int(300*SCALE)
+                      ls=int(200*SCALE)
                       logo=Image.open(LOGO).convert("RGBA").resize((ls,ls), Image.LANCZOS)
-                      bg.paste(logo,(int((LEFT_W-ls)//2), int(70*SCALE)), logo)
+                      bg.paste(logo,(int((LEFT_W-ls)//2), int(30*SCALE)), logo)
                   except: pass
 
-              f_title_bn=font(FONT_BN, 55)
-              f_title_sa=font(FONT_SA, 55)
-              f_sub_bn=font(FONT_BN, 42)
-              f_sub_sa=font(FONT_SA, 42)
-              f_para_bn=font(FONT_BN, 65)
-              f_para_sa=font(FONT_SA, 65)
-              f_page_bn=font(FONT_BN, 65)
-              f_page_sa=font(FONT_SA, 65)
-              f_num=font(FONT_BN, 65)
+              f_title_bn=font(FONT_BN, 34)
+              f_title_sa=font(FONT_SA, 34)
+              f_sub_bn=font(FONT_BN, 26)
+              f_sub_sa=font(FONT_SA, 26)
+              f_para_bn=font(FONT_BN, 44)
+              f_para_sa=font(FONT_SA, 44)
+              f_page_bn=font(FONT_BN, 44)
+              f_page_sa=font(FONT_SA, 44)
+              f_num=font(FONT_BN, 42)
 
-              max_left=LEFT_W-int(80*SCALE)
-              max_right=W-LEFT_W-int(320*SCALE)
+              max_left=LEFT_W-int(40*SCALE)
+              max_right=W-LEFT_W-int(140*SCALE)
 
-              y=int(400*SCALE)
+              y=int(260*SCALE)
               title="মাজমূ’আহ্ সালাওয়াতির রসূল ﷺ"
               for line in wrap_mixed(title, f_title_bn, f_title_sa, max_left, draw):
                   w=length_mixed(line, f_title_bn, f_title_sa, draw)
                   sx=(LEFT_W-w)//2
                   draw_mixed(draw, sx, y, line, f_title_bn, f_title_sa, (15,25,85))
-                  y+=int(55*SCALE*1.5)
+                  y+=int(34*SCALE*1.5)
 
-              y+=int(10*SCALE)
+              y+=int(6*SCALE)
               for line in wrap_mixed(SUB_RAW, f_sub_bn, f_sub_sa, max_left, draw):
                   w=length_mixed(line, f_sub_bn, f_sub_sa, draw)
                   sx=(LEFT_W-w)//2
                   draw_mixed(draw, sx, y, line, f_sub_bn, f_sub_sa, (60,60,80))
-                  y+=int(42*SCALE*1.45)
+                  y+=int(26*SCALE*1.45)
 
-              y+=int(30*SCALE)
-              draw.line([(int(80*SCALE), y), (LEFT_W-int(80*SCALE), y)], fill=(100,100,120), width=3)
+              y+=int(16*SCALE)
+              draw.line([(int(40*SCALE), y), (LEFT_W-int(40*SCALE), y)], fill=(100,100,120), width=2)
 
-              para_y = H - int(320*SCALE)
-              page_y = H - int(180*SCALE)
+              # পারা + পৃষ্ঠা - ﷺ সহ, mixed-font রেন্ডারিং দিয়ে
+              para_y = H - int(200*SCALE)
+              page_y = H - int(110*SCALE)
               pw=length_mixed(PARA_RAW, f_para_bn, f_para_sa, draw)
               draw_mixed(draw, (LEFT_W-pw)//2, para_y, PARA_RAW, f_para_bn, f_para_sa, (20,20,60))
               pgw=length_mixed(PAGE_RAW, f_page_bn, f_page_sa, draw)
               draw_mixed(draw, (LEFT_W-pgw)//2, page_y, PAGE_RAW, f_page_bn, f_page_sa, (20,20,60))
 
-              dia=int(160*SCALE)
-              cx=W-dia-int(80*SCALE)
-              cy=int(80*SCALE)
+              # ID Circle
+              dia=int(110*SCALE)
+              cx=W-dia-int(50*SCALE)
+              cy=int(50*SCALE)
               draw.ellipse([(cx,cy),(cx+dia,cy+dia)], fill=(35,45,85))
               nw=draw.textlength(id_bn, font=f_num)
-              draw.text((cx+(dia-nw)//2, cy+(dia-int(65*SCALE))//2), id_bn, font=f_num, fill=(255,255,255))
+              draw.text((cx+(dia-nw)//2, cy+(dia-int(42*SCALE))//2), id_bn, font=f_num, fill=(255,255,255))
 
+              # ডান পাশ - ডাইনামিক স্কেলিং দিয়ে নিচে কেটে যাওয়া বন্ধ করা হলো
               arabic_txt = normalize_ar(item.get('arabic',''))
               tr_txt = item.get('transliteration','')
               bn_txt = item.get('bengali','')
 
-              # 16:9 স্ক্রিনের জন্য অপটিমাইজড ডাইনামিক স্কেলিং
+              # বিভিন্ন ফন্ট সাইজের কনফিগারেশন সেট
               font_configs = [
-                  (90, 52, 58, 50, 1.45, 1.4, 1.35, 45, 30, 45),
-                  (80, 46, 50, 44, 1.4, 1.35, 1.3, 35, 25, 35),
-                  (70, 40, 44, 38, 1.35, 1.3, 1.25, 30, 20, 30),
-                  (60, 34, 38, 32, 1.3, 1.25, 1.2, 25, 15, 25)
+                  (78, 40, 46, 36, 1.5, 1.5, 1.4, 35, 25, 60),
+                  (68, 36, 40, 32, 1.45, 1.45, 1.35, 30, 20, 50),
+                  (58, 32, 36, 28, 1.4, 1.4, 1.3, 25, 18, 40),
+                  (48, 28, 30, 24, 1.35, 1.35, 1.25, 20, 15, 30),
+                  (40, 24, 26, 22, 1.3, 1.3, 1.2, 15, 10, 25)
               ]
 
-              top_margin = int(180 * SCALE)
-              bottom_margin = int(140 * SCALE)
+              top_margin = int(140 * SCALE)
+              bottom_margin = int(100 * SCALE)
               max_avail_h = H - top_margin - bottom_margin
 
               for sz_ar, sz_tr, sz_bn, sz_lbl, lh_ar, lh_tr, lh_bn, g1, g2, g3 in font_configs:
@@ -267,22 +281,22 @@ jobs:
 
               for line in ar_lines:
                   ww = length_mixed(line, f_ar, f_ar_sa, draw)
-                  draw_mixed(draw, W - int(140 * SCALE) - ww, yy, line, f_ar, f_ar_sa, (0, 0, 0))
+                  draw_mixed(draw, W - int(70 * SCALE) - ww, yy, line, f_ar, f_ar_sa, (0, 0, 0))
                   yy += line_h_ar
 
               yy += gap1
 
               for line in tr_lines:
-                  draw_mixed(draw, LEFT_W + int(100 * SCALE), yy, line, f_tr, f_tr_sa, (60, 60, 60))
+                  draw_mixed(draw, LEFT_W + int(50 * SCALE), yy, line, f_tr, f_tr_sa, (60, 60, 60))
                   yy += line_h_tr
 
               yy += gap2
 
-              draw.text((LEFT_W + int(100 * SCALE), yy), "বঙ্গানুবাদ:", font=f_label, fill=(20, 40, 120))
+              draw.text((LEFT_W + int(50 * SCALE), yy), "বঙ্গানুবাদ:", font=f_label, fill=(20, 40, 120))
               yy += lbl_step + gap3
 
               for line in bn_lines:
-                  draw_mixed(draw, LEFT_W + int(100 * SCALE), yy, line, f_bn, f_bn_sa, (15, 25, 85))
+                  draw_mixed(draw, LEFT_W + int(50 * SCALE), yy, line, f_bn, f_bn_sa, (15, 25, 85))
                   yy += line_h_bn
 
               bg.save(os.path.join(OUT, filename), "JPEG", quality=95, subsampling=0)
@@ -299,5 +313,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add -f output/
-          git commit -m "fix: set image dimensions to 16:9 Landscape (3840x2160) with auto-scaling" || echo "no changes"
+          git commit -m "fix: auto scale font sizes to fit vertical space" || echo "no changes"
           git push
