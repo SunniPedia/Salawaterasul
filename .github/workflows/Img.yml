@@ -16,7 +16,7 @@ on:
       subtitle_text:
         description: 'সাবটাইটেল'
         required: false
-        default: "প্রিয় নবী ﷺ'র নূর ও প্রকাশ প্রসঙ্গে"
+        default: 'প্রিয় নবী ﷺ''র নূর ও প্রকাশ প্রসঙ্গে'
         type: string
 
 jobs:
@@ -30,6 +30,7 @@ jobs:
         with:
           python-version: '3.10'
       - run: pip install Pillow fonttools
+
       - name: Generate Salawat Images
         env:
           PARA_NAME: ${{ inputs.para_name }}
@@ -48,7 +49,8 @@ jobs:
           FONT_BN="src/solaimanlipi.ttf"
           FONT_AR="src/noorehuda.ttf"
           FONT_SA="src/amiri.ttf" # ﷺ এর জন্য
-          SALLALLAHU_CP = 0xFDFA # ﷺ এর codepoint
+
+          SALLALLAHU_CP = 0xFDFA  # ﷺ এর codepoint
 
           def has_glyph(font_path, codepoint):
               """ফন্টে আসলেই এই glyph আছে কিনা যাচাই করে (শুধু file exists চেক না)"""
@@ -57,7 +59,7 @@ jobs:
                   cmap = tt.getBestCmap()
                   return cmap is not None and codepoint in cmap
               except Exception as e:
-                  print(f" glyph-check ব্যর্থ ({font_path}): {e}")
+                  print(f"  glyph-check ব্যর্থ ({font_path}): {e}")
                   return False
 
           # ধাপ ১: প্রথমে দেখি FONT_AR (noorehuda) নিজেই ﷺ সাপোর্ট করে কিনা - করলে আলাদা ফন্ট ডাউনলোডের দরকার নেই
@@ -74,6 +76,7 @@ jobs:
                   else:
                       print(f"{FONT_SA} আছে কিন্তু ﷺ glyph নেই/ভাঙা, নতুন করে ডাউনলোড হবে।")
                       os.remove(FONT_SA)
+
               if need_download:
                   os.makedirs("src", exist_ok=True)
                   try:
@@ -86,8 +89,8 @@ jobs:
                           raise RuntimeError("ডাউনলোড হওয়া ফন্টেও ﷺ glyph পাওয়া যায়নি।")
                       print("Amiri font ডাউনলোড সফল, ﷺ glyph নিশ্চিত হয়েছে।")
                   except Exception as e:
-                      print(f"⚠ Amiri download/verify ব্যর্থ: {e}")
-                      print(f"⚠ ﷺ চিহ্নটি এই রানে সঠিকভাবে নাও দেখাতে পারে — {FONT_AR} দিয়ে fallback করা হচ্ছে।")
+                      print(f"⚠️  Amiri download/verify ব্যর্থ: {e}")
+                      print(f"⚠️  ﷺ চিহ্নটি এই রানে সঠিকভাবে নাও দেখাতে পারে — {FONT_AR} দিয়ে fallback করা হচ্ছে।")
                       FONT_SA = FONT_AR
 
           def normalize_ar(text):
@@ -100,7 +103,7 @@ jobs:
           # ডিবাগ: inputs আসলে কী এসেছে তা log-এ দেখাই, যাতে খালি থাকলে সাথে সাথে বোঝা যায়
           print(f"[DEBUG] PARA_RAW = '{PARA_RAW}'")
           print(f"[DEBUG] PAGE_RAW = '{PAGE_RAW}'")
-          print(f"[DEBUG] SUB_RAW = '{SUB_RAW}'")
+          print(f"[DEBUG] SUB_RAW  = '{SUB_RAW}'")
 
           if not PARA_RAW:
               print("[WARNING] পারার নাম খালি এসেছে! Workflow trigger করার সময় 'para_name' ফিল্ডে মান দিন।")
@@ -116,7 +119,7 @@ jobs:
           EN_TO_BN=str.maketrans("0123456789","০১২৩৪৫৬৭৮৯")
           def to_bn(s): return str(s).translate(EN_TO_BN)
 
-          W,H=10240, 7680 # 16:12 (4:3)
+          W,H=3840,2160
           bg_img=Image.open(BG).convert("RGB") if os.path.exists(BG) else Image.new("RGB",(W,H),(232,236,244))
           W,H=bg_img.size
           LEFT_W=int(W*0.22)
@@ -159,6 +162,19 @@ jobs:
               if cur: lines.append(cur)
               return lines
 
+          def wrap_simple(text, fn, max_w, draw_obj):
+              # রাখা হলো backward-compat এর জন্য, কিন্তু main content-এও এখন wrap_mixed ব্যবহার হবে
+              lines=[]; cur=""
+              for w in text.split():
+                  test=f"{cur} {w}".strip()
+                  if draw_obj.textlength(test, font=fn) <= max_w:
+                      cur=test
+                  else:
+                      if cur: lines.append(cur)
+                      cur=w
+              if cur: lines.append(cur)
+              return lines
+
           with open(DATA, encoding="utf-8") as f:
               data=json.load(f)
 
@@ -166,6 +182,7 @@ jobs:
               id_int=int(item.get('id',0))
               filename=f"{id_int:04d}.jpg"
               id_bn=to_bn(str(id_int))
+
               bg=bg_img.resize((W,H), Image.LANCZOS)
               draw=ImageDraw.Draw(bg)
               draw.rectangle([0,0,LEFT_W,H], fill=(214,218,228))
@@ -186,6 +203,13 @@ jobs:
               f_page_bn=font(FONT_BN, 44)
               f_page_sa=font(FONT_SA, 44)
               f_num=font(FONT_BN, 42)
+              f_ar=font(FONT_AR, 78)
+              f_ar_sa=font(FONT_SA, 78)
+              f_tr=font(FONT_BN, 40)
+              f_tr_sa=font(FONT_SA, 40)
+              f_bn=font(FONT_BN, 46)
+              f_bn_sa=font(FONT_SA, 46)
+              f_label=font(FONT_BN, 36)
 
               max_left=LEFT_W-int(40*SCALE)
               max_right=W-LEFT_W-int(140*SCALE)
@@ -197,7 +221,6 @@ jobs:
                   sx=(LEFT_W-w)//2
                   draw_mixed(draw, sx, y, line, f_title_bn, f_title_sa, (15,25,85))
                   y+=int(34*SCALE*1.5)
-
               y+=int(6*SCALE)
               for line in wrap_mixed(SUB_RAW, f_sub_bn, f_sub_sa, max_left, draw):
                   w=length_mixed(line, f_sub_bn, f_sub_sa, draw)
@@ -211,8 +234,10 @@ jobs:
               # পারা + পৃষ্ঠা - ﷺ সহ, mixed-font রেন্ডারিং দিয়ে
               para_y = H - int(200*SCALE)
               page_y = H - int(110*SCALE)
+
               pw=length_mixed(PARA_RAW, f_para_bn, f_para_sa, draw)
               draw_mixed(draw, (LEFT_W-pw)//2, para_y, PARA_RAW, f_para_bn, f_para_sa, (20,20,60))
+
               pgw=length_mixed(PAGE_RAW, f_page_bn, f_page_sa, draw)
               draw_mixed(draw, (LEFT_W-pgw)//2, page_y, PAGE_RAW, f_page_bn, f_page_sa, (20,20,60))
 
@@ -224,94 +249,50 @@ jobs:
               nw=draw.textlength(id_bn, font=f_num)
               draw.text((cx+(dia-nw)//2, cy+(dia-int(42*SCALE))//2), id_bn, font=f_num, fill=(255,255,255))
 
-              # ডান পাশ - ডাইনামিক স্কেলিং দিয়ে নিচে কেটে যাওয়া বন্ধ করা হলো
+              # ডান পাশ - এখন এখানেও wrap_mixed/draw_mixed, কারণ data.json এর
+              # arabic/transliteration/bengali field-এও ﷺ থাকতে পারে
               arabic_txt = normalize_ar(item.get('arabic',''))
               tr_txt = item.get('transliteration','')
               bn_txt = item.get('bengali','')
 
-              # বিভিন্ন ফন্ট সাইজের কনফিগারেশন সেট
-              font_configs = [
-                  (78, 40, 46, 36, 1.5, 1.5, 1.4, 35, 25, 60),
-                  (68, 36, 40, 32, 1.45, 1.45, 1.35, 30, 20, 50),
-                  (58, 32, 36, 28, 1.4, 1.4, 1.3, 25, 18, 40),
-                  (48, 28, 30, 24, 1.35, 1.35, 1.25, 20, 15, 30),
-                  (40, 24, 26, 22, 1.3, 1.3, 1.2, 15, 10, 25)
-              ]
+              ar_lines=wrap_mixed(arabic_txt, f_ar, f_ar_sa, max_right, draw)
+              tr_lines=wrap_mixed(tr_txt, f_tr, f_tr_sa, max_right, draw)
+              bn_lines=wrap_mixed(bn_txt, f_bn, f_bn_sa, max_right, draw)
 
-              top_margin = int(140 * SCALE)
-              bottom_margin = int(100 * SCALE)
-              max_avail_h = H - top_margin - bottom_margin
-
-              for sz_ar, sz_tr, sz_bn, sz_lbl, lh_ar, lh_tr, lh_bn, g1, g2, g3 in font_configs:
-                  f_ar_t = font(FONT_AR, sz_ar)
-                  f_ar_sa_t = font(FONT_SA, sz_ar)
-                  f_tr_t = font(FONT_BN, sz_tr)
-                  f_tr_sa_t = font(FONT_SA, sz_tr)
-                  f_bn_t = font(FONT_BN, sz_bn)
-                  f_bn_sa_t = font(FONT_SA, sz_bn)
-
-                  ar_lines_t = wrap_mixed(arabic_txt, f_ar_t, f_ar_sa_t, max_right, draw)
-                  tr_lines_t = wrap_mixed(tr_txt, f_tr_t, f_tr_sa_t, max_right, draw)
-                  bn_lines_t = wrap_mixed(bn_txt, f_bn_t, f_bn_sa_t, max_right, draw)
-
-                  tot_h = (len(ar_lines_t) * int(sz_ar * SCALE * lh_ar) +
-                           int(g1 * SCALE) +
-                           len(tr_lines_t) * int(sz_tr * SCALE * lh_tr) +
-                           int(g2 * SCALE) +
-                           int(sz_lbl * SCALE * 1.3) +
-                           int(g3 * SCALE) +
-                           len(bn_lines_t) * int(sz_bn * SCALE * lh_bn))
-
-                  if tot_h <= max_avail_h or sz_ar == font_configs[-1][0]:
-                      f_ar, f_ar_sa = f_ar_t, f_ar_sa_t
-                      f_tr, f_tr_sa = f_tr_t, f_tr_sa_t
-                      f_bn, f_bn_sa = f_bn_t, f_bn_sa_t
-                      f_label = font(FONT_BN, sz_lbl)
-                      ar_lines, tr_lines, bn_lines = ar_lines_t, tr_lines_t, bn_lines_t
-                      line_h_ar = int(sz_ar * SCALE * lh_ar)
-                      line_h_tr = int(sz_tr * SCALE * lh_tr)
-                      line_h_bn = int(sz_bn * SCALE * lh_bn)
-                      gap1, gap2, gap3 = int(g1 * SCALE), int(g2 * SCALE), int(g3 * SCALE)
-                      lbl_step = int(sz_lbl * SCALE * 1.3)
-                      total = tot_h
-                      break
-
-              sy = max(top_margin, (H - total) // 2)
-              yy = sy
-
+              total=len(ar_lines)*int(78*SCALE*1.5)+len(tr_lines)*int(40*SCALE*1.5)+len(bn_lines)*int(46*SCALE*1.4)+250
+              sy=max(int(140*SCALE), (H-total)//2)
+              yy=sy
               for line in ar_lines:
-                  ww = length_mixed(line, f_ar, f_ar_sa, draw)
-                  draw_mixed(draw, W - int(70 * SCALE) - ww, yy, line, f_ar, f_ar_sa, (0, 0, 0))
-                  yy += line_h_ar
-
-              yy += gap1
-
+                  ww=length_mixed(line, f_ar, f_ar_sa, draw)
+                  draw_mixed(draw, W-int(70*SCALE)-ww, yy, line, f_ar, f_ar_sa, (0,0,0))
+                  yy+=int(78*SCALE*1.5)
+              yy+=int(35*SCALE)
               for line in tr_lines:
-                  draw_mixed(draw, LEFT_W + int(50 * SCALE), yy, line, f_tr, f_tr_sa, (60, 60, 60))
-                  yy += line_h_tr
-
-              yy += gap2
-
-              draw.text((LEFT_W + int(50 * SCALE), yy), "বঙ্গানুবাদ:", font=f_label, fill=(20, 40, 120))
-              yy += lbl_step + gap3
-
+                  draw_mixed(draw, LEFT_W+int(50*SCALE), yy, line, f_tr, f_tr_sa, (60,60,60))
+                  yy+=int(40*SCALE*1.5)
+              yy+=int(25*SCALE)
+              draw.text((LEFT_W+int(50*SCALE), yy), "বঙ্গানুবাদ:", font=f_label, fill=(20,40,120))
+              yy+=int(60*SCALE)
               for line in bn_lines:
-                  draw_mixed(draw, LEFT_W + int(50 * SCALE), yy, line, f_bn, f_bn_sa, (15, 25, 85))
-                  yy += line_h_bn
+                  draw_mixed(draw, LEFT_W+int(50*SCALE), yy, line, f_bn, f_bn_sa, (15,25,85))
+                  yy+=int(46*SCALE*1.4)
 
               bg.save(os.path.join(OUT, filename), "JPEG", quality=95, subsampling=0)
               print(f"Done {filename}")
+
           PY
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: salawat-images
           path: output/
           retention-days: 7
+
       - name: Push output
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add -f output/
-          git commit -m "fix: auto scale font sizes to fit vertical space" || echo "no changes"
+          git commit -m "fix: para visible + verified ﷺ glyph (all text fields)" || echo "no changes"
           git push
