@@ -50,7 +50,7 @@ jobs:
           FONT_AR="src/noorehuda.ttf"
           FONT_SA="src/amiri.ttf" # ﷺ এর জন্য
 
-          SALLALLAHU_CP = 0xFDFA  # ﷺ এর codepoint
+          SALLALLAHU_CP = 0xFDFA # ﷺ এর codepoint
 
           def has_glyph(font_path, codepoint):
               """ফন্টে আসলেই এই glyph আছে কিনা যাচাই করে (শুধু file exists চেক না)"""
@@ -59,7 +59,7 @@ jobs:
                   cmap = tt.getBestCmap()
                   return cmap is not None and codepoint in cmap
               except Exception as e:
-                  print(f"  glyph-check ব্যর্থ ({font_path}): {e}")
+                  print(f" glyph-check ব্যর্থ ({font_path}): {e}")
                   return False
 
           # ধাপ ১: প্রথমে দেখি FONT_AR (noorehuda) নিজেই ﷺ সাপোর্ট করে কিনা - করলে আলাদা ফন্ট ডাউনলোডের দরকার নেই
@@ -89,8 +89,8 @@ jobs:
                           raise RuntimeError("ডাউনলোড হওয়া ফন্টেও ﷺ glyph পাওয়া যায়নি।")
                       print("Amiri font ডাউনলোড সফল, ﷺ glyph নিশ্চিত হয়েছে।")
                   except Exception as e:
-                      print(f"⚠️  Amiri download/verify ব্যর্থ: {e}")
-                      print(f"⚠️  ﷺ চিহ্নটি এই রানে সঠিকভাবে নাও দেখাতে পারে — {FONT_AR} দিয়ে fallback করা হচ্ছে।")
+                      print(f"⚠ Amiri download/verify ব্যর্থ: {e}")
+                      print(f"⚠ ﷺ চিহ্নটি এই রানে সঠিকভাবে নাও দেখাতে পারে — {FONT_AR} দিয়ে fallback করা হচ্ছে।")
                       FONT_SA = FONT_AR
 
           def normalize_ar(text):
@@ -103,7 +103,7 @@ jobs:
           # ডিবাগ: inputs আসলে কী এসেছে তা log-এ দেখাই, যাতে খালি থাকলে সাথে সাথে বোঝা যায়
           print(f"[DEBUG] PARA_RAW = '{PARA_RAW}'")
           print(f"[DEBUG] PAGE_RAW = '{PAGE_RAW}'")
-          print(f"[DEBUG] SUB_RAW  = '{SUB_RAW}'")
+          print(f"[DEBUG] SUB_RAW = '{SUB_RAW}'")
 
           if not PARA_RAW:
               print("[WARNING] পারার নাম খালি এসেছে! Workflow trigger করার সময় 'para_name' ফিল্ডে মান দিন।")
@@ -119,7 +119,7 @@ jobs:
           EN_TO_BN=str.maketrans("0123456789","০১২৩৪৫৬৭৮৯")
           def to_bn(s): return str(s).translate(EN_TO_BN)
 
-          W,H=3840,2160
+          W,H=5120, 2880 # 5K - 16:9
           bg_img=Image.open(BG).convert("RGB") if os.path.exists(BG) else Image.new("RGB",(W,H),(232,236,244))
           W,H=bg_img.size
           LEFT_W=int(W*0.22)
@@ -294,5 +294,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add -f output/
-          git commit -m "fix: para visible + verified ﷺ glyph (all text fields)" || echo "no changes"
+          git commit -m "fix: para visible + verified ﷺ glyph (all text fields) - 5K" || echo "no changes"
           git push
