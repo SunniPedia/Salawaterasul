@@ -106,7 +106,7 @@ jobs:
           os.makedirs(OUT, exist_ok=True)
           EN_TO_BN=str.maketrans("0123456789","০১২৩৪৫৬৭৮৯")
           def to_bn(s): return str(s).translate(EN_TO_BN)
-          W,H=10240, 5760 # 10K - 16:9
+          W,H=10240, 7680 # 16:12 (4:3)
           bg_img=Image.open(BG).convert("RGB") if os.path.exists(BG) else Image.new("RGB",(W,H),(232,236,244))
           W,H=bg_img.size
           LEFT_W=int(W*0.22)
@@ -257,5 +257,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add -f output/
-          git commit -m "fix: updated image resolution to 10K" || echo "no changes"
+          git commit -m "fix: updated aspect ratio to 16:12 (10240x7680)" || echo "no changes"
           git push
