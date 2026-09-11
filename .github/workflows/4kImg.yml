@@ -119,16 +119,15 @@ jobs:
           EN_TO_BN=str.maketrans("0123456789","০১২৩৪৫৬৭৮৯")
           def to_bn(s): return str(s).translate(EN_TO_BN)
 
-          # ---- বেস ডাইমেনশন ও স্কেল (background.jpg এর আসল সাইজ থেকে) ----
+          # ---- বেস ডাইমেনশন (background.jpg এর আসল সাইজ থেকে) ----
           BASE_W, BASE_H = 3840, 2160
           orig_bg = Image.open(BG).convert("RGB") if os.path.exists(BG) else Image.new("RGB",(BASE_W,BASE_H),(232,236,244))
           BASE_W, BASE_H = orig_bg.size
-          W = BASE_W
-          LEFT_W=int(W*0.22)
-          SCALE=W/1280
+          BASE_RATIO = BASE_W / BASE_H  # ---- এই অনুপাতটাই সবসময় বজায় রাখা হবে ----
 
-          def font(path, dp):
-              try: return ImageFont.truetype(path, int(dp*SCALE))
+          def font(path, dp, scale):
+              """dp = লজিক্যাল (1280-unit ভিত্তিক) সাইজ, scale = সেই মুহূর্তের SCALE"""
+              try: return ImageFont.truetype(path, int(dp*scale))
               except: return ImageFont.load_default()
 
           def draw_mixed(draw_obj, x, y, text, fn_bn, fn_sa, fill):
@@ -164,41 +163,50 @@ jobs:
               if cur: lines.append(cur)
               return lines
 
-          def wrap_simple(text, fn, max_w, draw_obj):
-              # রাখা হলো backward-compat এর জন্য, কিন্তু main content-এও এখন wrap_mixed ব্যবহার হবে
-              lines=[]; cur=""
-              for w in text.split():
-                  test=f"{cur} {w}".strip()
-                  if draw_obj.textlength(test, font=fn) <= max_w:
-                      cur=test
-                  else:
-                      if cur: lines.append(cur)
-                      cur=w
-              if cur: lines.append(cur)
-              return lines
-
-          def make_canvas(target_h):
-              """background কে stretch না করে, প্রয়োজনে নিচের দিকে extend করে
-                 target_h উচ্চতার একটা canvas বানায়। মূল অংশ অপরিবর্তিত থাকে,
-                 শুধু বাড়তি জায়গাটা bottom edge এর গড় রঙ দিয়ে ভরাট হয়।"""
-              if target_h <= BASE_H:
-                  return orig_bg.copy()
-
-              canvas = Image.new("RGB", (W, target_h), (232,236,244))
-              canvas.paste(orig_bg, (0,0))
-
-              # bottom edge এর কয়েকটা সারির গড় রঙ বের করে সেটা দিয়ে বাকি অংশ ফিল করি
-              strip = orig_bg.crop((0, BASE_H-10, W, BASE_H))
-              avg = tuple(int(c) for c in ImageDraw.Draw(strip).im.convert("RGB").getpixel((0,0))) if False else None
-              # উপরের ট্রিক জটিল/অনির্ভরযোগ্য, তাই সহজ পদ্ধতি: strip রিসাইজ করে বাকি অংশে বসিয়ে দিচ্ছি
-              extend_h = target_h - BASE_H
-              stretched_strip = strip.resize((W, extend_h), Image.LANCZOS)
-              canvas.paste(stretched_strip, (0, BASE_H))
-              return canvas
-
-          # ---- measurement এর জন্য dummy draw object (কোনো ছবি ছাড়াই টেক্সট সাইজ মাপার কাজে ব্যবহার হয়) ----
+          # ---- measurement এর জন্য dummy draw object ----
           dummy_img = Image.new("RGB", (10, 10))
           dummy_draw = ImageDraw.Draw(dummy_img)
+
+          def prepare_layout(W_try, arabic_txt, tr_txt, bn_txt):
+              """একটা প্রস্তাবিত width (W_try) দিয়ে পুরো লেআউট (ফন্ট, wrap, required height) হিসাব করে।
+                 W_try যত বড় হবে, LEFT_W/max_width/font size সব সমানুপাতে বড় হবে —
+                 তাই wrap ফলাফল (কোন শব্দ কোন লাইনে যাবে) কার্যত অপরিবর্তিত থাকে।"""
+              SCALE = W_try/1280
+              LEFT_W = int(W_try*0.22)
+              max_left = LEFT_W-int(40*SCALE)
+              max_right = W_try-LEFT_W-int(140*SCALE)
+
+              fonts = {
+                  'title_bn': font(FONT_BN,34,SCALE), 'title_sa': font(FONT_SA,34,SCALE),
+                  'sub_bn':   font(FONT_BN,26,SCALE), 'sub_sa':   font(FONT_SA,26,SCALE),
+                  'para_bn':  font(FONT_BN,44,SCALE), 'para_sa':  font(FONT_SA,44,SCALE),
+                  'page_bn':  font(FONT_BN,44,SCALE), 'page_sa':  font(FONT_SA,44,SCALE),
+                  'num':      font(FONT_BN,42,SCALE),
+                  'ar':       font(FONT_AR,78,SCALE), 'ar_sa':    font(FONT_SA,78,SCALE),
+                  'tr':       font(FONT_BN,40,SCALE), 'tr_sa':    font(FONT_SA,40,SCALE),
+                  'bn':       font(FONT_BN,46,SCALE), 'bn_sa':    font(FONT_SA,46,SCALE),
+                  'label':    font(FONT_BN,36,SCALE),
+              }
+
+              ar_lines=wrap_mixed(arabic_txt, fonts['ar'], fonts['ar_sa'], max_right, dummy_draw)
+              tr_lines=wrap_mixed(tr_txt, fonts['tr'], fonts['tr_sa'], max_right, dummy_draw)
+              bn_lines=wrap_mixed(bn_txt, fonts['bn'], fonts['bn_sa'], max_right, dummy_draw)
+
+              total=len(ar_lines)*int(78*SCALE*1.5)+len(tr_lines)*int(40*SCALE*1.5)+len(bn_lines)*int(46*SCALE*1.4)+250
+              TOP_MARGIN=int(140*SCALE)
+              BOTTOM_MARGIN=int(140*SCALE)
+              required_H = total+TOP_MARGIN+BOTTOM_MARGIN
+
+              return dict(W=W_try, H=None, SCALE=SCALE, LEFT_W=LEFT_W, max_left=max_left, max_right=max_right,
+                          fonts=fonts, ar_lines=ar_lines, tr_lines=tr_lines, bn_lines=bn_lines,
+                          total=total, TOP_MARGIN=TOP_MARGIN, BOTTOM_MARGIN=BOTTOM_MARGIN, required_H=required_H)
+
+          def build_background(W, H):
+              """অনুপাত (W:H) সবসময় BASE_RATIO-এর সমান রাখা হয় বলে, পুরো background
+                 uniform-ভাবে নতুন সাইজে resize করলেই কোনো দিক চেপে/টানা যায় না।"""
+              if (W, H) == (BASE_W, BASE_H):
+                  return orig_bg.copy()
+              return orig_bg.resize((W, H), Image.LANCZOS)
 
           with open(DATA, encoding="utf-8") as f:
               data=json.load(f)
@@ -208,45 +216,48 @@ jobs:
               filename=f"{id_int:04d}.jpg"
               id_bn=to_bn(str(id_int))
 
-              max_left=LEFT_W-int(40*SCALE)
-              max_right=W-LEFT_W-int(140*SCALE)
-
-              # ফন্টগুলো লোড করি (height মাপার আগে দরকার, কারণ wrap_mixed ফন্ট মেট্রিক্স ব্যবহার করে)
-              f_title_bn=font(FONT_BN, 34)
-              f_title_sa=font(FONT_SA, 34)
-              f_sub_bn=font(FONT_BN, 26)
-              f_sub_sa=font(FONT_SA, 26)
-              f_para_bn=font(FONT_BN, 44)
-              f_para_sa=font(FONT_SA, 44)
-              f_page_bn=font(FONT_BN, 44)
-              f_page_sa=font(FONT_SA, 44)
-              f_num=font(FONT_BN, 42)
-              f_ar=font(FONT_AR, 78)
-              f_ar_sa=font(FONT_SA, 78)
-              f_tr=font(FONT_BN, 40)
-              f_tr_sa=font(FONT_SA, 40)
-              f_bn=font(FONT_BN, 46)
-              f_bn_sa=font(FONT_SA, 46)
-              f_label=font(FONT_BN, 36)
-
-              # ডান পাশের কনটেন্ট
               arabic_txt = normalize_ar(item.get('arabic',''))
               tr_txt = item.get('transliteration','')
               bn_txt = item.get('bengali','')
 
-              ar_lines=wrap_mixed(arabic_txt, f_ar, f_ar_sa, max_right, dummy_draw)
-              tr_lines=wrap_mixed(tr_txt, f_tr, f_tr_sa, max_right, dummy_draw)
-              bn_lines=wrap_mixed(bn_txt, f_bn, f_bn_sa, max_right, dummy_draw)
+              # ---- পাস ১: বেস width দিয়ে required height মাপি ----
+              layout = prepare_layout(BASE_W, arabic_txt, tr_txt, bn_txt)
 
-              total=len(ar_lines)*int(78*SCALE*1.5)+len(tr_lines)*int(40*SCALE*1.5)+len(bn_lines)*int(46*SCALE*1.4)+250
+              if layout['required_H'] <= BASE_H:
+                  # টেক্সট মূল সাইজেই ধরে যাচ্ছে, কিছু বাড়ানোর দরকার নেই
+                  W, H = BASE_W, BASE_H
+              else:
+                  # ---- অনুপাত (aspect ratio) ঠিক রেখে width ও height দুটোই বাড়াই ----
+                  scale_factor = (layout['required_H'] / BASE_H) * 1.02  # সামান্য নিরাপত্তা-বাফার
+                  W = round(BASE_W * scale_factor)
+                  H = round(W / BASE_RATIO)  # W অনুযায়ী H বের করি, রেশিও যেন ঠিক থাকে
 
-              # ---- ফন্ট সাইজ ছোট না করে, প্রয়োজনে ছবির height বাড়িয়ে সব কনটেন্ট ধরানো হচ্ছে ----
-              TOP_MARGIN=int(140*SCALE)
-              BOTTOM_MARGIN=int(140*SCALE)
-              required_H = total + TOP_MARGIN + BOTTOM_MARGIN
-              H = max(BASE_H, required_H)
+                  # ---- পাস ২: নতুন (বড়) width দিয়ে আবার লেআউট মাপি (ফন্ট বড় হওয়ায় সামান্য তফাত হতে পারে) ----
+                  layout = prepare_layout(W, arabic_txt, tr_txt, bn_txt)
+                  if layout['required_H'] > H:
+                      # সেফটি নেট: এখনো না আঁটলে, একই রেশিও বজায় রেখেই আরেকটু বাড়াই
+                      H = layout['required_H']
+                      W = round(H * BASE_RATIO)
+                      layout = prepare_layout(W, arabic_txt, tr_txt, bn_txt)
+                      H = max(H, layout['required_H'])
 
-              bg = make_canvas(H)
+              SCALE=layout['SCALE']; LEFT_W=layout['LEFT_W']
+              fonts=layout['fonts']
+              f_title_bn=fonts['title_bn']; f_title_sa=fonts['title_sa']
+              f_sub_bn=fonts['sub_bn'];     f_sub_sa=fonts['sub_sa']
+              f_para_bn=fonts['para_bn'];   f_para_sa=fonts['para_sa']
+              f_page_bn=fonts['page_bn'];   f_page_sa=fonts['page_sa']
+              f_num=fonts['num']
+              f_ar=fonts['ar']; f_ar_sa=fonts['ar_sa']
+              f_tr=fonts['tr']; f_tr_sa=fonts['tr_sa']
+              f_bn=fonts['bn']; f_bn_sa=fonts['bn_sa']
+              f_label=fonts['label']
+              ar_lines=layout['ar_lines']; tr_lines=layout['tr_lines']; bn_lines=layout['bn_lines']
+              total=layout['total']
+              TOP_MARGIN=layout['TOP_MARGIN']; BOTTOM_MARGIN=layout['BOTTOM_MARGIN']
+              max_left=layout['max_left']
+
+              bg = build_background(W, H)
               draw=ImageDraw.Draw(bg)
               draw.rectangle([0,0,LEFT_W,H], fill=(214,218,228))
 
@@ -258,7 +269,7 @@ jobs:
                   except: pass
 
               y=int(260*SCALE)
-              title="মাজমূ’আহ্ সালাওয়াতির রসূল ﷺ"
+              title="মাজমূ'আহ্ সালাওয়াতির রসূল ﷺ"
               for line in wrap_mixed(title, f_title_bn, f_title_sa, max_left, draw):
                   w=length_mixed(line, f_title_bn, f_title_sa, draw)
                   sx=(LEFT_W-w)//2
@@ -311,7 +322,7 @@ jobs:
                   yy+=int(46*SCALE*1.4)
 
               bg.save(os.path.join(OUT, filename), "JPEG", quality=95, subsampling=0)
-              print(f"Done {filename} | H={H} (BASE_H={BASE_H})")
+              print(f"Done {filename} | W={W} H={H} (ratio={W/H:.4f}, base_ratio={BASE_RATIO:.4f})")
 
           PY
 
@@ -327,5 +338,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add -f output/
-          git commit -m "fix: dynamic image height for long text, no more bottom cutoff" || echo "no changes"
+          git commit -m "fix: maintain aspect ratio while auto-sizing for long text" || echo "no changes"
           git push
