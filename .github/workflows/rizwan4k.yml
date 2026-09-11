@@ -1,97 +1,385 @@
-name: Generate 4K Video from Images and Audio
+name: Generate Video from Images and Audio
 
 on:
   workflow_dispatch: {}   # Manually run from the Actions tab
+
   # push:
-  #   branches: [ main ]  # চাইলে push হলে অটো রান করতে চাইলে এটা আনকমেন্ট করো
+  #   branches: [ main ]  # চাইলে push হলে অটো রান করতে এটা আনকমেন্ট করো
+
 
 jobs:
   build-video:
     runs-on: ubuntu-latest
-    timeout-minutes: 340   # GitHub free runner ম্যাক্স ৬ ঘন্টা (৩৬০ মিনিট), সেফ মার্জিন রাখা হলো
+
+    timeout-minutes: 340
+    # GitHub free runner-এর সময়সীমার মধ্যে নিরাপদ মার্জিন
+
 
     steps:
+
+      # ============================================================
+      # 1. Checkout Repository
+      # ============================================================
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          lfs: true   # যদি Git LFS ব্যবহার করো, সেটাও পুল করবে
+          lfs: true
 
+
+      # ============================================================
+      # 2. Install FFmpeg
+      # ============================================================
       - name: Install ffmpeg
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg
 
+
+      # ============================================================
+      # 3. Verify Required Folders
+      # ============================================================
       - name: Verify folders exist
         run: |
+          set -e
+
           if [ ! -d "output" ]; then
             echo "::error::output ফোল্ডার পাওয়া যায়নি"
             exit 1
           fi
+
           if [ ! -d "rizwanaudio" ]; then
             echo "::error::rizwanaudio ফোল্ডার পাওয়া যায়নি"
             exit 1
           fi
 
+          echo "✓ output folder পাওয়া গেছে"
+          echo "✓ rizwanaudio folder পাওয়া গেছে"
+
+
+      # ============================================================
+      # 4. Build Per-Pair Video Segments
+      #
+      # IMPORTANT:
+      #
+      # এখানে Image-এর আসল Resolution 그대로 রাখা হবে।
+      #
+      # অর্থাৎ:
+      #
+      # Image = 3840 × 2160
+      # Video = 3840 × 2160
+      #
+      # Image = 3840 × 2500
+      # Video = 3840 × 2500
+      #
+      # Image = 3840 × 3000
+      # Video = 3840 × 3000
+      #
+      # কোনো 3840×2160 forced resize/pad করা হবে না।
+      # ============================================================
       - name: Build per-pair video segments
         run: |
           set -e
+
           mkdir -p segments
+
           rm -f concat_list.txt
 
-          # rizwanaudio ফোল্ডারের প্রতিটি mp3 ফাইল ধরে ধরে matching jpg খুঁজে সেগমেন্ট বানাবে
+
+          # --------------------------------------------------------
+          # rizwanaudio ফোল্ডারের প্রতিটি MP3 ধরে matching JPG খোঁজা
+          # --------------------------------------------------------
           for audio in rizwanaudio/*.mp3; do
+
+            # কোনো MP3 না থাকলে loop pattern literal হতে পারে
+            if [ ! -f "$audio" ]; then
+              echo "::warning::কোনো MP3 ফাইল পাওয়া যায়নি"
+              continue
+            fi
+
+
+            # ------------------------------------------------------
+            # Filename বের করা
+            #
+            # উদাহরণ:
+            #
+            # rizwanaudio/0001.mp3
+            #
+            # filename = 0001
+            # image = output/0001.jpg
+            # ------------------------------------------------------
             filename=$(basename "$audio" .mp3)
+
             image="output/${filename}.jpg"
 
+
+            # ------------------------------------------------------
+            # Matching Image আছে কিনা যাচাই
+            # ------------------------------------------------------
             if [ ! -f "$image" ]; then
               echo "::warning::${filename}.jpg পাওয়া যায়নি, এই পেয়ারটি স্কিপ করা হলো"
               continue
             fi
 
-            echo ">>> Processing pair: ${filename}.jpg + ${filename}.mp3"
 
-            # অডিওর দৈর্ঘ্য বের করা হচ্ছে যাতে ভিডিও ঠিক ততক্ষণ চলে
-            duration=$(ffprobe -v error -show_entries format=duration \
-              -of default=noprint_wrappers=1:nokey=1 "$audio")
+            echo ""
+            echo "============================================================"
+            echo ">>> Processing pair:"
+            echo "    Image : ${image}"
+            echo "    Audio : ${audio}"
+            echo "============================================================"
 
-            ffmpeg -y -loop 1 -i "$image" -i "$audio" \
-              -c:v libx264 -preset medium -crf 18 -tune stillimage \
-              -c:a aac -b:a 192k -pix_fmt yuv420p \
-              -vf "scale=3840:2160:force_original_aspect_ratio=decrease,pad=3840:2160:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,fps=30" \
-              -shortest -t "$duration" \
+
+            # ------------------------------------------------------
+            # Image-এর আসল Width ও Height বের করা
+            #
+            # এখানে Image resize করা হচ্ছে না।
+            # শুধু dimension পড়া হচ্ছে।
+            # ------------------------------------------------------
+            image_width=$(ffprobe \
+              -v error \
+              -select_streams v:0 \
+              -show_entries stream=width \
+              -of csv=p=0 \
+              "$image")
+
+            image_height=$(ffprobe \
+              -v error \
+              -select_streams v:0 \
+              -show_entries stream=height \
+              -of csv=p=0 \
+              "$image")
+
+
+            echo "Image Width  = ${image_width}px"
+            echo "Image Height = ${image_height}px"
+
+
+            # ------------------------------------------------------
+            # Width অবশ্যই 3840 হতে হবে
+            #
+            # আগের image-generation YML অনুযায়ী Width locked:
+            # TARGET_W = 3840
+            # ------------------------------------------------------
+            if [ "$image_width" != "3840" ]; then
+              echo "::error::${filename}.jpg-এর Width ${image_width}px। Expected Width = 3840px"
+              exit 1
+            fi
+
+
+            # ------------------------------------------------------
+            # Height অবশ্যই 0-এর বেশি হতে হবে
+            # ------------------------------------------------------
+            if [ "$image_height" -le 0 ]; then
+              echo "::error::${filename}.jpg-এর Height invalid"
+              exit 1
+            fi
+
+
+            # ------------------------------------------------------
+            # Audio Duration বের করা
+            # ------------------------------------------------------
+            duration=$(ffprobe \
+              -v error \
+              -show_entries format=duration \
+              -of default=noprint_wrappers=1:nokey=1 \
+              "$audio")
+
+
+            echo "Audio Duration = ${duration} seconds"
+
+
+            # ======================================================
+            # FFmpeg
+            #
+            # IMPORTANT:
+            #
+            # এখানে কোনো scale=3840:2160 নেই।
+            #
+            # কোনো pad=3840:2160 নেই।
+            #
+            # কোনো crop নেই।
+            #
+            # Image-এর exact resolution ব্যবহার করা হচ্ছে।
+            # ======================================================
+            ffmpeg -y \
+              -loop 1 \
+              -i "$image" \
+              -i "$audio" \
+              \
+              -c:v libx264 \
+              -preset medium \
+              -crf 18 \
+              -tune stillimage \
+              \
+              -c:a aac \
+              -b:a 192k \
+              \
+              -pix_fmt yuv420p \
+              \
+              -vf "setsar=1,fps=30" \
+              \
+              -shortest \
+              -t "$duration" \
+              \
               "segments/${filename}.mp4"
 
+
+            # ------------------------------------------------------
+            # Generated Segment যাচাই
+            # ------------------------------------------------------
+            segment_width=$(ffprobe \
+              -v error \
+              -select_streams v:0 \
+              -show_entries stream=width \
+              -of csv=p=0 \
+              "segments/${filename}.mp4")
+
+
+            segment_height=$(ffprobe \
+              -v error \
+              -select_streams v:0 \
+              -show_entries stream=height \
+              -of csv=p=0 \
+              "segments/${filename}.mp4")
+
+
+            echo "Segment Width  = ${segment_width}px"
+            echo "Segment Height = ${segment_height}px"
+
+
+            # ------------------------------------------------------
+            # Segment Resolution যাচাই
+            #
+            # Input JPG এবং Output MP4-এর resolution একই হতে হবে।
+            # ------------------------------------------------------
+            if [ "$segment_width" != "$image_width" ] || \
+               [ "$segment_height" != "$image_height" ]; then
+
+              echo "::error::Video resolution Image-এর সাথে match করছে না!"
+              echo "::error::Image   = ${image_width}x${image_height}"
+              echo "::error::Video   = ${segment_width}x${segment_height}"
+
+              exit 1
+            fi
+
+
+            echo "✓ Resolution verified:"
+            echo "  ${segment_width}x${segment_height}"
+
+
+            # ------------------------------------------------------
+            # Concat List-এ Segment যোগ
+            # ------------------------------------------------------
             echo "file '$(pwd)/segments/${filename}.mp4'" >> concat_list.txt
+
+
+            echo "✓ Done: ${filename}.mp4"
+            echo ""
+
           done
 
-          echo "----- concat_list.txt -----"
-          cat concat_list.txt
 
-      - name: Concatenate all segments into final 4K video
+          # ========================================================
+          # Show concat list
+          # ========================================================
+          echo ""
+          echo "============================================================"
+          echo "----- concat_list.txt -----"
+          echo "============================================================"
+
+          cat concat_list.txt || true
+
+
+      # ============================================================
+      # 5. Concatenate All Segments
+      # ============================================================
+      - name: Concatenate all segments into final video
         run: |
           set -e
+
+
           if [ ! -s concat_list.txt ]; then
             echo "::error::কোনো ভ্যালিড পেয়ার পাওয়া যায়নি, ভিডিও তৈরি করা যাচ্ছে না"
             exit 1
           fi
 
-          ffmpeg -y -f concat -safe 0 -i concat_list.txt -c copy final_4k_video.mp4
 
-          echo "ফাইনাল ভিডিও রেডি:"
-          ls -lh final_4k_video.mp4
+          echo "Segments concatenate করা হচ্ছে..."
 
+
+          ffmpeg -y \
+            -f concat \
+            -safe 0 \
+            -i concat_list.txt \
+            -c copy \
+            final_video.mp4
+
+
+          echo ""
+          echo "============================================================"
+          echo "FINAL VIDEO"
+          echo "============================================================"
+
+
+          ls -lh final_video.mp4
+
+
+          # --------------------------------------------------------
+          # Final Video Resolution
+          # --------------------------------------------------------
+          final_width=$(ffprobe \
+            -v error \
+            -select_streams v:0 \
+            -show_entries stream=width \
+            -of csv=p=0 \
+            final_video.mp4)
+
+
+          final_height=$(ffprobe \
+            -v error \
+            -select_streams v:0 \
+            -show_entries stream=height \
+            -of csv=p=0 \
+            final_video.mp4)
+
+
+          final_duration=$(ffprobe \
+            -v error \
+            -show_entries format=duration \
+            -of default=noprint_wrappers=1:nokey=1 \
+            final_video.mp4)
+
+
+          echo ""
+          echo "Final Width    = ${final_width}px"
+          echo "Final Height   = ${final_height}px"
+          echo "Final Duration = ${final_duration}s"
+
+
+          echo ""
+          echo "✓ Final video successfully created."
+
+
+      # ============================================================
+      # 6. Upload Artifact
+      # ============================================================
       - name: Upload video as workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: final-4k-video
-          path: final_4k_video.mp4
-          retention-days: 7   # প্রয়োজনমতো দিন বাড়াতে/কমাতে পারো
+          name: final-video
+          path: final_video.mp4
+          retention-days: 7
 
-      - name: Create GitHub Release with the video (optional, for permanent storage)
+
+      # ============================================================
+      # 7. Create GitHub Release
+      # ============================================================
+      - name: Create GitHub Release with the video
         uses: softprops/action-gh-release@v2
         with:
           tag_name: video-${{ github.run_number }}
           name: 4K Video Build #${{ github.run_number }}
-          files: final_4k_video.mp4
+          files: final_video.mp4
+
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
